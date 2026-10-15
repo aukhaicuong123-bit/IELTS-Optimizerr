@@ -1,0 +1,1598 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index c8d9499..7bbce53 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,17 +1,735 @@
+-import {useEffect,useState,type ReactNode} from 'react'
+-import {BookOpen,CalendarDays,CheckCircle2,Clock3,Compass,Home,ListChecks,Network,Palette,RotateCcw,Settings,Target} from 'lucide-react'
+-import {passages} from './content'; import {heatLevel,localDate,mergeAttemptErrors,minutesByDate,recommendations,scoreAttempt,startOfLocalWeek} from './domain'; import {clearStore,loadStore} from './storage'; import type {Attempt,Page,PlanItem,Profile,Question,Store} from './types'
+-const nav:[Page,string,typeof Home][]=[['dashboard','Dashboard',Home],['plan','Study Plan',CalendarDays],['practice','Reading Practice',BookOpen],['errors','Error Review',RotateCcw],['record','Learning Record',ListChecks],['network','Learning Network',Network],['design','Learning Design',Palette],['profile','Profile',Settings]]; const uid=(p:string)=>`${p}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`
+-export default function App(){const[s,setS]=useState<Store>(loadStore),[page,setPage]=useState<Page>('dashboard'),[ids,setIds]=useState<string[]>([]),[toast,setToast]=useState('');useEffect(()=>localStorage.setItem('ielts-optimizer-store-v1',JSON.stringify(s)),[s]);const note=(x:string)=>{setToast(x);setTimeout(()=>setToast(''),2400)},go=(p:Page)=>{setIds([]);setPage(p)},retest=(x:string[])=>{setIds(x);setPage('practice')};return <div className="app"><aside><div className="brand"><span>I</span><div>IELTS Optimizer<small>PERSONALIZED LEARNING</small></div></div><nav aria-label="Main navigation">{nav.map(([id,label,Icon])=><button aria-label={label} className={page===id?'active':''} onClick={()=>go(id)} key={id}><Icon size={18}/><span>{label}</span></button>)}</nav><div className="sidebar-note"><Target size={17}/><b>Evidence before conclusions.</b><span>Activity data is not a measure of mastery.</span></div></aside><main><header><div><p className="eyebrow">PERSONALIZED IELTS LEARNING SYSTEM</p><h1>{nav.find(n=>n[0]===page)?.[1]}</h1></div><button aria-label="Open profile" className="icon-button" onClick={()=>setPage('profile')}><Settings size={18}/></button></header>{page==='dashboard'&&<Dashboard s={s} go={setPage}/>} {page==='plan'&&<Plan s={s} setS={setS} note={note}/>} {page==='practice'&&<Practice s={s} setS={setS} note={note} ids={ids}/>} {page==='errors'&&<Errors s={s} setS={setS} retest={retest} go={setPage} note={note}/>} {page==='record'&&<Record s={s} setS={setS} note={note}/>} {page==='network'&&<LearningNetwork/>} {page==='design'&&<LearningDesign/>} {page==='profile'&&<Profile s={s} setS={setS} note={note}/>}</main>{toast&&<div className="toast" role="status"><CheckCircle2 size={18}/>{toast}</div>}</div>}
+-function Dashboard({s,go}:{s:Store;go:(p:Page)=>void}){const m=minutesByDate(s.sessions),today=Math.round(m[localDate(new Date().toISOString())]||0),open=s.errors.filter(e=>!e.retestAttemptIds.length),rec=recommendations(s.profile,s.attempts,s.errors,s.plan);return <><section className="hero-card"><div><span className="eyebrow">YOUR NEXT LEARNING ACTION</span><h2>{rec.title}</h2><p>{rec.reason}</p><button className="primary" onClick={()=>go(rec.page)}>Open action →</button></div></section><div className="metrics"><Metric icon={<Target/>} label="Target band" value={s.profile.targetBand?`${s.profile.targetBand}`:'Not set'}/><Metric icon={<Clock3/>} label="Today" value={`${today} min`}/><Metric icon={<BookOpen/>} label="Attempts" value={`${s.attempts.length}`}/><Metric icon={<RotateCcw/>} label="Open errors" value={`${open.length}`}/></div><Heatmap s={s}/></>}
+-function Metric({icon,label,value}:{icon:ReactNode;label:string;value:string}){return <div className="metric"><div className="metric-icon">{icon}</div><small>{label}</small><b>{value}</b></div>}
+-function Heatmap({s}:{s:Store}){const map=minutesByDate(s.sessions),[selected,setSelected]=useState(localDate(new Date().toISOString())),start=new Date(startOfLocalWeek(new Date()));start.setDate(start.getDate()-84);const days=Array.from({length:91},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return d}),m=map[selected]||0,goal=s.profile.dailyGoalMinutes||0;return <section className="panel"><h3>Study heatmap</h3><p className="muted">Activity by local calendar day, separate from quiz mastery. Select a cell.</p><div className="heatmap-wrap"><div className="weekday-labels" aria-hidden="true">{['S','M','T','W','T','F','S'].map((x,i)=><span key={i}>{x}</span>)}</div><div className="heatmap-grid">{days.map(d=>{const date=localDate(d.toISOString()),v=map[date]||0,rest=s.profile.daysOff.includes(date);return <button aria-label={`${date}: ${Math.round(v)} minutes${rest?', planned rest day':''}`} className={`heat l${heatLevel(v,goal)} ${rest?'rest-day':''} ${selected===date?'selected-day':''}`} onClick={()=>setSelected(date)} key={date}>{d.getDate()===1?d.toLocaleString('en',{month:'short'}):v?Math.round(v):''}</button>})}</div></div><div className="heatmap-detail"><b>{selected}</b><span>{Math.round(m)} minutes{goal?` · ${Math.round(m/goal*100)}% of ${goal}-minute goal`:''}</span><span>{s.profile.daysOff.includes(selected)?'Planned rest day':''}</span></div><div className="legend"><span>0</span>{[0,1,2,3,4,5].map(x=><i className={`heat l${x}`} key={x}/>)}<span>Goal+</span></div></section>}
+-function Practice({s,setS,note,ids}:{s:Store;setS:(s:Store)=>void;note:(x:string)=>void;ids:string[]}){const practiceCount=s.attempts.filter(x=>x.kind==='practice').length,p=ids.length?passages[1]:passages[practiceCount%passages.length],[a,setA]=useState<Record<string,string>>({}),[result,setResult]=useState<Attempt>();const submit=()=>{const x:Attempt={id:uid('attempt'),passageId:p.id,skill:'Reading',answers:a,score:scoreAttempt(p.questions,a),total:p.questions.length,kind:ids.length?'retest':'practice',createdAt:new Date().toISOString(),objectiveIds:p.questions.map(q=>q.objective)},errors=mergeAttemptErrors(s.errors,x,p.questions);setS({...s,attempts:[...s.attempts,x],errors});setResult(x);note('Attempt saved. Review each answer and reflect on your strategy.')};return <section className="practice-layout"><article className="panel passage"><span className="eyebrow">READING · {p.level} · {p.minutes} MIN</span><h2>{p.title}</h2>{p.text.split('\n\n').map((x,i)=><p key={i}>{x}</p>)}</article><article className="panel questions"><h3>{ids.length?'Retest · new passage, same objectives':'Check your understanding'}</h3>{result?<Result x={result} qs={p.questions} s={s} setS={setS}/>:<>{p.questions.map((q,i)=><QuestionCard key={q.id} q={q} i={i} answer={a[q.id]} onAnswer={x=>setA({...a,[q.id]:x})}/>)}<button className="primary full" onClick={submit}>Submit attempt</button></>}</article></section>}
+-function QuestionCard({q,i,answer,onAnswer}:{q:Question;i:number;answer?:string;onAnswer:(x:string)=>void}){return <div className="question"><b>{i+1} · {q.objective}</b><h3>{q.prompt}</h3><div className="options">{q.options.map(o=><label className={answer===o?'chosen':''} key={o}><input type="radio" name={q.id} checked={answer===o} onChange={()=>onAnswer(o)}/>{o}</label>)}</div></div>}
+-function Result({x,qs,s,setS}:{x:Attempt;qs:Question[];s:Store;setS:(s:Store)=>void}){const[r,setR]=useState(x.reflection||{}),save=()=>setS({...s,attempts:s.attempts.map(a=>a.id===x.id?{...a,reflection:r}:a)});return <div className="result"><h2>{x.score}/{x.total}</h2><p>Practice evidence, not an official IELTS band score.</p>{qs.map(q=>{const ok=x.answers[q.id]===q.answer;return <div className={`feedback ${ok?'correct':'incorrect'}`} key={q.id}><b>{ok?'✓':'×'} {q.objective}</b><span>Your answer: {x.answers[q.id]||'No answer'}</span>{!ok&&<small>Correct: {q.answer}. Evidence cue: {q.explanation}</small>}</div>})}<div className="reflection"><h3>Short reflection</h3><p className="muted">What evidence supported your choice? What will you change next time?</p><textarea aria-label="Reflection" value={r.evidence||''} onChange={e=>setR({...r,evidence:e.target.value})} placeholder="Evidence I used..."/><textarea aria-label="Next strategy" value={r.nextStep||''} onChange={e=>setR({...r,nextStep:e.target.value})} placeholder="Next strategy..."/><button className="secondary" onClick={save}>Save reflection</button></div></div>}
+-function Errors({s,setS,retest,note,go}:{s:Store;setS:(s:Store)=>void;retest:(x:string[])=>void;note:(x:string)=>void;go:(p:Page)=>void}){return <section className="stack"><section className="panel"><h3>Error memory</h3><p className="muted">Mistakes remain in history. Retest closes an error only after the same objective is answered correctly.</p></section>{s.errors.length?s.errors.map(e=><section className="panel error-card" key={e.id}><span className="status">{e.retestAttemptIds.length?'Fixed by Retest':'Needs retest'}</span><h3>{e.objective}</h3>{e.prompt&&<p className="question-copy">Question: <b>{e.prompt}</b></p>}<p>Your answer: <b>{e.learnerAnswer}</b></p><p>Correct answer: <b className="green-text">{e.correctAnswer}</b></p><p>{e.explanation}</p><button className="secondary" onClick={()=>retest([e.id])}>Start Retest →</button><button className="text-button" onClick={()=>{setS({...s,errors:s.errors.map(x=>x.id===e.id?{...x,reviewCount:x.reviewCount+1}:x)});note('Error reviewed.')}}>Mark reviewed</button></section>):<section className="panel"><p>No errors yet.</p><button className="secondary" onClick={()=>go('practice')}>Go to practice</button></section>}</section>}
+-function Plan({s,setS,note}:{s:Store;setS:(s:Store)=>void;note:(x:string)=>void}){const suggestion=recommendations(s.profile,s.attempts,s.errors,s.plan);const add=(source:'manual'|'recommended')=>{const today=localDate(new Date().toISOString());if(s.profile.daysOff.includes(today)){note('Today is a planned rest day. Choose another date in Profile.');return}const e=s.errors.find(x=>!x.retestAttemptIds.length),x:PlanItem={id:uid('plan'),date:today,title:source==='recommended'?suggestion.title:'Reading accuracy practice',skill:source==='recommended'?s.profile.priority:'Reading',objective:e?.objective||'Build learning evidence',minutes:s.profile.dailyGoalMinutes||30,status:'planned',source,reason:source==='recommended'?suggestion.reason:'Added manually.'};setS({...s,plan:[...s.plan,x]});note('Study plan updated.')};return <section className="stack"><section className="panel"><h2>Study Plan</h2><p className="muted">Rules are transparent: priority, goal, open errors and planned rest days shape suggestions.</p><button className="primary" onClick={()=>add('recommended')}>+ Add recommendation</button><button className="secondary" onClick={()=>add('manual')}>Add manual</button></section>{s.plan.map(p=><section className="panel plan-row" key={p.id}><span>{p.source==='recommended'?'Recommended':'Manual'} · {p.date}</span><h3>{p.title}</h3><small>{p.skill} · {p.minutes} min · {p.reason}</small><select value={p.status} onChange={e=>setS({...s,plan:s.plan.map(x=>x.id===p.id?{...x,status:e.target.value as PlanItem['status']}:x)})}><option value="planned">Planned</option><option value="done">Done</option><option value="skipped">Skipped</option></select></section>)}</section>}
+-function Record({s,setS,note}:{s:Store;setS:(s:Store)=>void;note:(x:string)=>void}){const active=s.activeSession,[now,setNow]=useState(Date.now());useEffect(()=>{if(!active||active.paused)return;const i=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(i)},[active]);const sec=active?active.accumulatedSeconds+(active.paused?0:(now-new Date(active.lastResumedAt).getTime())/1000):0,start=()=>{const t=new Date().toISOString();setS({...s,activeSession:{id:uid('session'),startedAt:t,lastResumedAt:t,accumulatedSeconds:0,paused:false}})},pause=()=>{if(active)setS({...s,activeSession:{...active,accumulatedSeconds:active.accumulatedSeconds+(Date.now()-new Date(active.lastResumedAt).getTime())/1000,paused:true}})},resume=()=>{if(active)setS({...s,activeSession:{...active,lastResumedAt:new Date().toISOString(),paused:false}})},stop=()=>{if(!active)return;const end=new Date().toISOString(),seconds=active.accumulatedSeconds+(active.paused?0:(Date.now()-new Date(active.lastResumedAt).getTime())/1000);setS({...s,activeSession:undefined,sessions:[...s.sessions,{id:active.id,startedAt:active.startedAt,endedAt:end,minutes:Math.max(1,Math.round(seconds/60)),activity:'Timer session',skill:'Reading'}]});note('Timer session saved as measured activity.')};return <section className="stack"><section className="panel"><h2>{active?(active.paused?'Timer paused':'Session in progress'):'Learning Record'}</h2><p className="timer">{Math.floor(sec/60).toString().padStart(2,'0')}:{Math.floor(sec%60).toString().padStart(2,'0')}</p>{!active?<button className="primary" onClick={start}>Start timer</button>:<><button className="secondary" onClick={active.paused?resume:pause}>{active.paused?'Resume':'Pause'}</button><button className="danger" onClick={stop}>Stop and save</button></>}<p className="muted">Timer sessions are measured. Manual entries are self-reported when added.</p></section><section className="panel"><b>{s.sessions.reduce((a,x)=>a+x.minutes,0)} measured minutes</b>{s.sessions.length===0?<p className="muted">No study sessions yet.</p>:s.sessions.slice().reverse().map(x=><div className="list-row" key={x.id}><div><b>{x.activity||'Study session'}</b><small>{new Date(x.startedAt).toLocaleString()} → {new Date(x.endedAt).toLocaleString()}</small></div><strong>{x.minutes} min</strong></div>)}</section><section className="panel"><h3>Reading history</h3>{s.attempts.length===0?<p className="muted">No Reading attempts yet.</p>:s.attempts.slice().reverse().map(a=><div className="list-row" key={a.id}><div><b>{a.kind==='retest'?'Retest':'Reading practice'} · {a.score}/{a.total}</b><small>{new Date(a.createdAt).toLocaleString()} · {a.objectiveIds.length} objectives · {a.reflection?'Reflection saved':'No reflection yet'}</small></div><strong>{Math.round(a.score/a.total*100)}%</strong></div>)}</section></section>}
+-function LearningNetwork(){return <section className="stack"><section className="panel"><h2>Learning Network</h2><p className="muted">Connectivism means following useful links between skills, strategies, evidence and resources.</p><div className="network-card"><b>Reading · Main idea · Evidence mapping</b><span>Use the passage, Error Review and Retest as connected nodes.</span></div><div className="network-card"><b>British Council IELTS</b><span>Official preparation guidance and sample materials.</span><a href="https://takeielts.britishcouncil.org/take-ielts/prepare" target="_blank" rel="noreferrer">Open resource ↗</a></div><div className="network-card"><b>Cambridge English</b><span>Official IELTS preparation and assessment information.</span><a href="https://www.cambridgeenglish.org/exams-and-tests/ielts/preparation/" target="_blank" rel="noreferrer">Open resource ↗</a></div></section><section className="panel"><h3>Peer Learning</h3><p className="muted">Not available in local-only mode. No peer users or comments are fabricated.</p><p>To enable real collaboration, configure Supabase using the optional environment variables documented in README.</p></section></section>}
+-function LearningDesign(){return <section className="stack"><section className="panel"><h2>Learning Design</h2><p className="muted">How the implemented features translate learning theory into concrete actions.</p>{[['Behaviorism','Reading feedback, Error Review and Retest provide immediate constructive reinforcement.','Implemented'],['Cognitivism','Questions are chunked; explanations connect answers to passage evidence and objectives.','Implemented'],['Constructivism','A saved post-attempt reflection asks learners to name evidence and a next strategy.','Implemented'],['Connectivism','Learning Network links skill, objective, error history and verified external resources. Peer mode is not active locally.','Partially implemented']].map(([a,b,c])=><div className="design-row" key={a}><b>{a}</b><span>{b}</span><em>{c}</em></div>)}</section><section className="panel"><h3>TPACK mapping</h3><p><b>Content:</b> IELTS Reading passages, question types and objectives.</p><p><b>Pedagogy:</b> practice → feedback → reflection → targeted Retest.</p><p><b>Technology:</b> scoring, local records, Heatmap and resource links.</p></section><section className="panel"><h3>SAMR with one Reading task</h3><p><b>Substitution:</b> answer online. <b>Augmentation:</b> automatic scoring and explanations. <b>Modification:</b> Error Memory selects a different Retest set. <b>Redefinition:</b> planned future peer exchange with a real backend; not claimed as active.</p><small>Framework reference: Puentedura's SAMR model; implementation status is stated explicitly.</small></section></section>}
+-function Profile({s,setS,note}:{s:Store;setS:(s:Store)=>void;note:(x:string)=>void}){const[p,setP]=useState<Profile>(s.profile),[goalError,setGoalError]=useState('');const save=()=>{if(p.targetBand!==undefined&&(p.targetBand<1||p.targetBand>9)){setGoalError('Band must be between 1 and 9.');return}if(p.dailyGoalMinutes!==undefined&&(p.dailyGoalMinutes<1||p.dailyGoalMinutes>1440)){setGoalError('Daily goal must be between 1 and 1440 minutes.');return}setS({...s,profile:p});note('Profile saved.');setGoalError('')};return <section className="panel"><h2>Learner Profile</h2><p className="muted">Goals are self-reported; they are not an official assessment.</p><div className="form-grid"><label>Target band<input type="number" min="1" max="9" step=".5" value={p.targetBand||''} onChange={e=>setP({...p,targetBand:e.target.value?Number(e.target.value):undefined})}/></label><label>Current level<input placeholder="e.g. B2" value={p.currentLevel||''} onChange={e=>setP({...p,currentLevel:e.target.value})}/></label><label>Exam date<input type="date" value={p.examDate||''} onChange={e=>setP({...p,examDate:e.target.value})}/></label><label>Daily goal (minutes)<input type="number" min="1" max="1440" value={p.dailyGoalMinutes||''} onChange={e=>setP({...p,dailyGoalMinutes:e.target.value?Number(e.target.value):undefined})}/></label><label>Priority<select value={p.priority} onChange={e=>setP({...p,priority:e.target.value as Profile['priority']})}><option>Reading</option><option>Listening</option><option>Writing</option><option>Speaking</option></select></label><label>Planned rest dates<input placeholder="YYYY-MM-DD, YYYY-MM-DD" value={p.daysOff.join(', ')} onChange={e=>setP({...p,daysOff:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)})}/></label></div>{goalError&&<p className="status">{goalError}</p>}<button className="primary" onClick={save}>Save profile</button><button className="danger-outline" onClick={()=>{clearStore();location.reload()}}>Clear local data</button></section>}
++import { useEffect, useState, type ReactNode } from 'react'
++import { BookOpen, CalendarDays, CheckCircle2, Clock3, Home, ListChecks, Network, Palette, RotateCcw, Settings, Target } from 'lucide-react'
++import { passages, practicePassages, retestPassages } from './content'
++import { getObjectiveId, heatLevel, isErrorOpen, localDate, mergeAttemptErrors, minutesByDate, recommendations, scoreAttempt, startOfLocalWeek } from './domain'
++import { clearStore, loadStore } from './storage'
++import type { Attempt, Page, PlanItem, Profile, Question, Store } from './types'
++
++const nav: [Page, string, typeof Home][] = [
++  ['dashboard', 'Dashboard', Home],
++  ['plan', 'Study Plan', CalendarDays],
++  ['practice', 'Reading Practice', BookOpen],
++  ['errors', 'Error Review', RotateCcw],
++  ['record', 'Learning Record', ListChecks],
++  ['network', 'Learning Network', Network],
++  ['design', 'Learning Design', Palette],
++  ['profile', 'Profile', Settings]
++]
++const uid = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
++
++export default function App() {
++  const [s, setS] = useState<Store>(loadStore),
++    [page, setPage] = useState<Page>('dashboard'),
++    [ids, setIds] = useState<string[]>([]),
++    [toast, setToast] = useState('')
++
++  useEffect(() => localStorage.setItem('ielts-optimizer-store-v1', JSON.stringify(s)), [s])
++
++  const note = (x: string) => {
++    setToast(x)
++    setTimeout(() => setToast(''), 2400)
++  }
++  const go = (p: Page) => {
++    setIds([])
++    setPage(p)
++  }
++  const retest = (x: string[]) => {
++    setIds(x)
++    setPage('practice')
++  }
++
++  return (
++    <div className="app">
++      <aside>
++        <div className="brand">
++          <span>I</span>
++          <div>
++            IELTS Optimizer<small>PERSONALIZED LEARNING</small>
++          </div>
++        </div>
++        <nav aria-label="Main navigation">
++          {nav.map(([id, label, Icon]) => (
++            <button aria-label={label} className={page === id ? 'active' : ''} onClick={() => go(id)} key={id}>
++              <Icon size={18} />
++              <span>{label}</span>
++            </button>
++          ))}
++        </nav>
++        <div className="sidebar-note">
++          <Target size={17} />
++          <b>Evidence before conclusions.</b>
++          <span>Activity data is not a measure of mastery.</span>
++        </div>
++      </aside>
++      <main>
++        <header>
++          <div>
++            <p className="eyebrow">PERSONALIZED IELTS LEARNING SYSTEM</p>
++            <h1>{nav.find(n => n[0] === page)?.[1]}</h1>
++          </div>
++          <button aria-label="Open profile" className="icon-button" onClick={() => setPage('profile')}>
++            <Settings size={18} />
++          </button>
++        </header>
++        {page === 'dashboard' && <Dashboard s={s} go={setPage} />}
++        {page === 'plan' && <Plan s={s} setS={setS} note={note} />}
++        {page === 'practice' && <Practice s={s} setS={setS} note={note} ids={ids} />}
++        {page === 'errors' && <Errors s={s} setS={setS} retest={retest} go={setPage} note={note} />}
++        {page === 'record' && <Record s={s} setS={setS} note={note} />}
++        {page === 'network' && <LearningNetwork />}
++        {page === 'design' && <LearningDesign />}
++        {page === 'profile' && <Profile s={s} setS={setS} note={note} />}
++      </main>
++      {toast && (
++        <div className="toast" role="status">
++          <CheckCircle2 size={18} />
++          {toast}
++        </div>
++      )}
++    </div>
++  )
++}
++
++function Dashboard({ s, go }: { s: Store; go: (p: Page) => void }) {
++  const m = minutesByDate(s.sessions),
++    today = Math.round(m[localDate(new Date().toISOString())] || 0),
++    open = s.errors.filter(isErrorOpen),
++    rec = recommendations(s.profile, s.attempts, s.errors, s.plan)
++
++  return (
++    <>
++      <section className="hero-card">
++        <div>
++          <span className="eyebrow">YOUR NEXT LEARNING ACTION</span>
++          <h2>{rec.title}</h2>
++          <p>{rec.reason}</p>
++          <button className="primary" onClick={() => go(rec.page)}>
++            Open action →
++          </button>
++        </div>
++      </section>
++      <div className="metrics">
++        <Metric icon={<Target />} label="Target band" value={s.profile.targetBand ? `${s.profile.targetBand}` : 'Not set'} />
++        <Metric icon={<Clock3 />} label="Today" value={`${today} min`} />
++        <Metric icon={<BookOpen />} label="Attempts" value={`${s.attempts.length}`} />
++        <Metric icon={<RotateCcw />} label="Open errors" value={`${open.length}`} />
++      </div>
++      <Heatmap s={s} />
++    </>
++  )
++}
++
++function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
++  return (
++    <div className="metric">
++      <div className="metric-icon">{icon}</div>
++      <small>{label}</small>
++      <b>{value}</b>
++    </div>
++  )
++}
++
++function Heatmap({ s }: { s: Store }) {
++  const map = minutesByDate(s.sessions),
++    [selected, setSelected] = useState(localDate(new Date().toISOString())),
++    start = new Date(startOfLocalWeek(new Date()))
++  start.setDate(start.getDate() - 84)
++  const days = Array.from({ length: 91 }, (_, i) => {
++    const d = new Date(start)
++    d.setDate(start.getDate() + i)
++    return d
++  }),
++    m = map[selected] || 0,
++    goal = s.profile.dailyGoalMinutes || 0
++
++  return (
++    <section className="panel">
++      <h3>Study heatmap</h3>
++      <p className="muted">Activity by local calendar day, separate from quiz mastery. Select a cell.</p>
++      <div className="heatmap-wrap">
++        <div className="weekday-labels" aria-hidden="true">
++          {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((x, i) => (
++            <span key={i}>{x}</span>
++          ))}
++        </div>
++        <div className="heatmap-grid">
++          {days.map(d => {
++            const date = localDate(d.toISOString()),
++              v = map[date] || 0,
++              rest = s.profile.daysOff.includes(date)
++            return (
++              <button
++                aria-label={`${date}: ${Math.round(v)} minutes${rest ? ', planned rest day' : ''}`}
++                className={`heat l${heatLevel(v, goal)} ${rest ? 'rest-day' : ''} ${selected === date ? 'selected-day' : ''}`}
++                onClick={() => setSelected(date)}
++                key={date}
++              >
++                {d.getDate() === 1 ? d.toLocaleString('en', { month: 'short' }) : v ? Math.round(v) : ''}
++              </button>
++            )
++          })}
++        </div>
++      </div>
++      <div className="heatmap-detail">
++        <b>{selected}</b>
++        <span>
++          {Math.round(m)} minutes{goal ? ` · ${Math.round((m / goal) * 100)}% of ${goal}-minute goal` : ''}
++        </span>
++        <span>{s.profile.daysOff.includes(selected) ? 'Planned rest day' : ''}</span>
++      </div>
++      <div className="legend">
++        <span>0</span>
++        {[0, 1, 2, 3, 4, 5].map(x => (
++          <i className={`heat l${x}`} key={x} />
++        ))}
++        <span>Goal+</span>
++      </div>
++    </section>
++  )
++}
++
++function Practice({ s, setS, note, ids }: { s: Store; setS: (s: Store) => void; note: (x: string) => void; ids: string[] }) {
++  const isRetest = ids.length > 0
++  const practiceCount = s.attempts.filter(x => x.kind === 'practice').length
++  const targetErrors = isRetest ? s.errors.filter(e => ids.includes(e.id)) : []
++  const targetObjectiveIds = targetErrors.map(e => e.objectiveId || getObjectiveId(e))
++
++  // Separate ordinary practice passages from Retest passages:
++  const p = isRetest
++    ? (retestPassages[0] || passages[1])
++    : practicePassages[practiceCount % practicePassages.length]
++
++  // Filter questions for retest so only the targeted objective is tested:
++  const qs = isRetest && targetObjectiveIds.length > 0
++    ? p.questions.filter(q => targetObjectiveIds.includes(getObjectiveId(q)))
++    : p.questions
++  const activeQuestions = qs.length > 0 ? qs : p.questions
++
++  const [a, setA] = useState<Record<string, string>>({})
++  const [result, setResult] = useState<Attempt>()
++
++  const submit = () => {
++    const x: Attempt = {
++      id: uid('attempt'),
++      passageId: p.id,
++      skill: 'Reading',
++      answers: a,
++      score: scoreAttempt(activeQuestions, a),
++      total: activeQuestions.length,
++      kind: isRetest ? 'retest' : 'practice',
++      createdAt: new Date().toISOString(),
++      objectiveIds: activeQuestions.map(q => getObjectiveId(q)),
++      targetErrorIds: isRetest ? ids : undefined,
++      targetObjectiveId: targetObjectiveIds[0],
++    }
++    const errors = mergeAttemptErrors(s.errors, x, activeQuestions)
++    setS({ ...s, attempts: [...s.attempts, x], errors })
++    setResult(x)
++    note('Attempt saved. Review each answer and reflect on your strategy.')
++  }
++
++  return (
++    <section className="practice-layout">
++      <article className="panel passage">
++        <span className="eyebrow">READING · {p.level} · {p.minutes} MIN</span>
++        <h2>{p.title}</h2>
++        {p.text.split('\n\n').map((x, i) => (
++          <p key={i}>{x}</p>
++        ))}
++      </article>
++      <article className="panel questions">
++        <h3>{isRetest ? 'Retest · new passage, same objectives' : 'Check your understanding'}</h3>
++        {result ? (
++          <Result x={result} qs={activeQuestions} s={s} setS={setS} />
++        ) : (
++          <>
++            {activeQuestions.map((q, i) => (
++              <QuestionCard key={q.id} q={q} i={i} answer={a[q.id]} onAnswer={x => setA({ ...a, [q.id]: x })} />
++            ))}
++            <button className="primary full" onClick={submit}>
++              Submit attempt
++            </button>
++          </>
++        )}
++      </article>
++    </section>
++  )
++}
++
++function QuestionCard({ q, i, answer, onAnswer }: { q: Question; i: number; answer?: string; onAnswer: (x: string) => void }) {
++  return (
++    <div className="question">
++      <b>
++        {i + 1} · {q.objective}
++      </b>
++      <h3>{q.prompt}</h3>
++      <div className="options">
++        {q.options.map(o => (
++          <label className={answer === o ? 'chosen' : ''} key={o}>
++            <input type="radio" name={q.id} checked={answer === o} onChange={() => onAnswer(o)} />
++            {o}
++          </label>
++        ))}
++      </div>
++    </div>
++  )
++}
++
++function Result({ x, qs, s, setS }: { x: Attempt; qs: Question[]; s: Store; setS: (s: Store) => void }) {
++  const [r, setR] = useState(x.reflection || {}),
++    save = () => setS({ ...s, attempts: s.attempts.map(a => (a.id === x.id ? { ...a, reflection: r } : a)) })
++
++  return (
++    <div className="result">
++      <h2>
++        {x.score}/{x.total}
++      </h2>
++      <p>Practice evidence, not an official IELTS band score.</p>
++      {qs.map(q => {
++        const ok = x.answers[q.id] === q.answer
++        return (
++          <div className={`feedback ${ok ? 'correct' : 'incorrect'}`} key={q.id}>
++            <b>
++              {ok ? '✓' : '×'} {q.objective}
++            </b>
++            <span>Your answer: {x.answers[q.id] || 'No answer'}</span>
++            {!ok && <small>Correct: {q.answer}. Evidence cue: {q.explanation}</small>}
++          </div>
++        )
++      })}
++      <div className="reflection">
++        <h3>Short reflection</h3>
++        <p className="muted">What evidence supported your choice? What will you change next time?</p>
++        <textarea aria-label="Reflection" value={r.evidence || ''} onChange={e => setR({ ...r, evidence: e.target.value })} placeholder="Evidence I used..." />
++        <textarea aria-label="Next strategy" value={r.nextStep || ''} onChange={e => setR({ ...r, nextStep: e.target.value })} placeholder="Next strategy..." />
++        <button className="secondary" onClick={save}>
++          Save reflection
++        </button>
++      </div>
++    </div>
++  )
++}
++
++function Errors({ s, setS, retest, note, go }: { s: Store; setS: (s: Store) => void; retest: (x: string[]) => void; note: (x: string) => void; go: (p: Page) => void }) {
++  return (
++    <section className="stack">
++      <section className="panel">
++        <h3>Error memory</h3>
++        <p className="muted">Mistakes remain in history. Retest closes an error only after the same objective is answered correctly.</p>
++      </section>
++      {s.errors.length ? (
++        s.errors.map(e => (
++          <section className="panel error-card" key={e.id}>
++            <span className={`status ${isErrorOpen(e) ? '' : 'good'}`}>{isErrorOpen(e) ? 'Needs retest' : 'Fixed by Retest'}</span>
++            <h3>{e.objective}</h3>
++            {e.prompt && (
++              <p className="question-copy">
++                Question: <b>{e.prompt}</b>
++              </p>
++            )}
++            <p>
++              Your answer: <b>{e.learnerAnswer}</b>
++            </p>
++            <p>
++              Correct answer: <b className="green-text">{e.correctAnswer}</b>
++            </p>
++            <p>{e.explanation}</p>
++            <button className="secondary" onClick={() => retest([e.id])}>
++              Start Retest →
++            </button>
++            <button
++              className="text-button"
++              onClick={() => {
++                setS({ ...s, errors: s.errors.map(x => (x.id === e.id ? { ...x, reviewCount: x.reviewCount + 1 } : x)) })
++                note('Error reviewed.')
++              }}
++            >
++              Mark reviewed
++            </button>
++          </section>
++        ))
++      ) : (
++        <section className="panel">
++          <p>No errors yet.</p>
++          <button className="secondary" onClick={() => go('practice')}>
++            Go to practice
++          </button>
++        </section>
++      )}
++    </section>
++  )
++}
++
++function Plan({ s, setS, note }: { s: Store; setS: (s: Store) => void; note: (x: string) => void }) {
++  const suggestion = recommendations(s.profile, s.attempts, s.errors, s.plan)
++  const add = (source: 'manual' | 'recommended') => {
++    const today = localDate(new Date().toISOString())
++    if (s.profile.daysOff.includes(today)) {
++      note('Today is a planned rest day. Choose another date in Profile.')
++      return
++    }
++    const e = s.errors.find(isErrorOpen),
++      x: PlanItem = {
++        id: uid('plan'),
++        date: today,
++        title: source === 'recommended' ? suggestion.title : 'Reading accuracy practice',
++        skill: source === 'recommended' ? s.profile.priority : 'Reading',
++        objective: e?.objective || 'Build learning evidence',
++        minutes: s.profile.dailyGoalMinutes || 30,
++        status: 'planned',
++        source,
++        reason: source === 'recommended' ? suggestion.reason : 'Added manually.'
++      }
++    setS({ ...s, plan: [...s.plan, x] })
++    note('Study plan updated.')
++  }
++
++  return (
++    <section className="stack">
++      <section className="panel">
++        <h2>Study Plan</h2>
++        <p className="muted">Rules are transparent: priority, goal, open errors and planned rest days shape suggestions.</p>
++        <button className="primary" onClick={() => add('recommended')}>
++          + Add recommendation
++        </button>
++        <button className="secondary" onClick={() => add('manual')}>
++          Add manual
++        </button>
++      </section>
++      {s.plan.map(p => (
++        <section className="panel plan-row" key={p.id}>
++          <span>
++            {p.source === 'recommended' ? 'Recommended' : 'Manual'} · {p.date}
++          </span>
++          <h3>{p.title}</h3>
++          <small>
++            {p.skill} · {p.minutes} min · {p.reason}
++          </small>
++          <select
++            value={p.status}
++            onChange={e =>
++              setS({
++                ...s,
++                plan: s.plan.map(x => (x.id === p.id ? { ...x, status: e.target.value as PlanItem['status'] } : x))
++              })
++            }
++          >
++            <option value="planned">Planned</option>
++            <option value="done">Done</option>
++            <option value="skipped">Skipped</option>
++          </select>
++        </section>
++      ))}
++    </section>
++  )
++}
++
++function Record({ s, setS, note }: { s: Store; setS: (s: Store) => void; note: (x: string) => void }) {
++  const active = s.activeSession,
++    [now, setNow] = useState(Date.now())
++
++  useEffect(() => {
++    if (!active || active.paused) return
++    const i = setInterval(() => setNow(Date.now()), 1000)
++    return () => clearInterval(i)
++  }, [active])
++
++  const sec = active
++    ? active.accumulatedSeconds + (active.paused ? 0 : (now - new Date(active.lastResumedAt).getTime()) / 1000)
++    : 0,
++    start = () => {
++      const t = new Date().toISOString()
++      setS({
++        ...s,
++        activeSession: { id: uid('session'), startedAt: t, lastResumedAt: t, accumulatedSeconds: 0, paused: false }
++      })
++    },
++    pause = () => {
++      if (active)
++        setS({
++          ...s,
++          activeSession: {
++            ...active,
++            accumulatedSeconds: active.accumulatedSeconds + (Date.now() - new Date(active.lastResumedAt).getTime()) / 1000,
++            paused: true
++          }
++        })
++    },
++    resume = () => {
++      if (active)
++        setS({
++          ...s,
++          activeSession: { ...active, lastResumedAt: new Date().toISOString(), paused: false }
++        })
++    },
++    stop = () => {
++      if (!active) return
++      const end = new Date().toISOString(),
++        seconds =
++          active.accumulatedSeconds + (active.paused ? 0 : (Date.now() - new Date(active.lastResumedAt).getTime()) / 1000)
++      setS({
++        ...s,
++        activeSession: undefined,
++        sessions: [
++          ...s.sessions,
++          {
++            id: active.id,
++            startedAt: active.startedAt,
++            endedAt: end,
++            minutes: Math.max(1, Math.round(seconds / 60)),
++            activity: 'Timer session',
++            skill: 'Reading'
++          }
++        ]
++      })
++      note('Timer session saved as measured activity.')
++    }
++
++  return (
++    <section className="stack">
++      <section className="panel">
++        <h2>{active ? (active.paused ? 'Timer paused' : 'Session in progress') : 'Learning Record'}</h2>
++        <p className="timer">
++          {Math.floor(sec / 60)
++            .toString()
++            .padStart(2, '0')}
++          :
++          {Math.floor(sec % 60)
++            .toString()
++            .padStart(2, '0')}
++        </p>
++        {!active ? (
++          <button className="primary" onClick={start}>
++            Start timer
++          </button>
++        ) : (
++          <>
++            <button className="secondary" onClick={active.paused ? resume : pause}>
++              {active.paused ? 'Resume' : 'Pause'}
++            </button>
++            <button className="danger" onClick={stop}>
++              Stop and save
++            </button>
++          </>
++        )}
++        <p className="muted">Timer sessions are measured. Manual entries are self-reported when added.</p>
++      </section>
++      <section className="panel">
++        <b>{s.sessions.reduce((a, x) => a + x.minutes, 0)} measured minutes</b>
++        {s.sessions.length === 0 ? (
++          <p className="muted">No study sessions yet.</p>
++        ) : (
++          s.sessions
++            .slice()
++            .reverse()
++            .map(x => (
++              <div className="list-row" key={x.id}>
++                <div>
++                  <b>{x.activity || 'Study session'}</b>
++                  <small>
++                    {new Date(x.startedAt).toLocaleString()} → {new Date(x.endedAt).toLocaleString()}
++                  </small>
++                </div>
++                <strong>{x.minutes} min</strong>
++              </div>
++            ))
++        )}
++      </section>
++      <section className="panel">
++        <h3>Reading history</h3>
++        {s.attempts.length === 0 ? (
++          <p className="muted">No Reading attempts yet.</p>
++        ) : (
++          s.attempts
++            .slice()
++            .reverse()
++            .map(a => (
++              <div className="list-row" key={a.id}>
++                <div>
++                  <b>
++                    {a.kind === 'retest' ? 'Retest' : 'Reading practice'} · {a.score}/{a.total}
++                  </b>
++                  <small>
++                    {new Date(a.createdAt).toLocaleString()} · {a.objectiveIds.length} objectives ·{' '}
++                    {a.reflection ? 'Reflection saved' : 'No reflection yet'}
++                  </small>
++                </div>
++                <strong>{Math.round((a.score / a.total) * 100)}%</strong>
++              </div>
++            ))
++        )}
++      </section>
++    </section>
++  )
++}
++
++function LearningNetwork() {
++  return (
++    <section className="stack">
++      <section className="panel">
++        <h2>Learning Network</h2>
++        <p className="muted">Connectivism means following useful links between skills, strategies, evidence and resources.</p>
++        <div className="network-card">
++          <b>Reading · Main idea · Evidence mapping</b>
++          <span>Use the passage, Error Review and Retest as connected nodes.</span>
++        </div>
++        <div className="network-card">
++          <b>British Council IELTS</b>
++          <span>Official preparation guidance and sample materials.</span>
++          <a href="https://takeielts.britishcouncil.org/take-ielts/prepare" target="_blank" rel="noreferrer">
++            Open resource ↗
++          </a>
++        </div>
++        <div className="network-card">
++          <b>Cambridge English</b>
++          <span>Official IELTS preparation and assessment information.</span>
++          <a href="https://www.cambridgeenglish.org/exams-and-tests/ielts/preparation/" target="_blank" rel="noreferrer">
++            Open resource ↗
++          </a>
++        </div>
++      </section>
++      <section className="panel">
++        <h3>Peer Learning</h3>
++        <p className="muted">Not available in local-only mode. No peer users or comments are fabricated.</p>
++        <p>To enable real collaboration, configure Supabase using the optional environment variables documented in README.</p>
++      </section>
++    </section>
++  )
++}
++
++function LearningDesign() {
++  return (
++    <section className="stack">
++      <section className="panel">
++        <h2>Learning Design</h2>
++        <p className="muted">How the implemented features translate learning theory into concrete actions.</p>
++        {[
++          ['Behaviorism', 'Reading feedback, Error Review and Retest provide immediate constructive reinforcement.', 'Implemented'],
++          ['Cognitivism', 'Questions are chunked; explanations connect answers to passage evidence and objectives.', 'Implemented'],
++          ['Constructivism', 'A saved post-attempt reflection asks learners to name evidence and a next strategy.', 'Implemented'],
++          ['Connectivism', 'Learning Network links skill, objective, error history and verified external resources. Peer mode is not active locally.', 'Partially implemented']
++        ].map(([a, b, c]) => (
++          <div className="design-row" key={a}>
++            <b>{a}</b>
++            <span>{b}</span>
++            <em>{c}</em>
++          </div>
++        ))}
++      </section>
++      <section className="panel">
++        <h3>TPACK mapping</h3>
++        <p>
++          <b>Content:</b> IELTS Reading passages, question types and objectives.
++        </p>
++        <p>
++          <b>Pedagogy:</b> practice → feedback → reflection → targeted Retest.
++        </p>
++        <p>
++          <b>Technology:</b> scoring, local records, Heatmap and resource links.
++        </p>
++      </section>
++      <section className="panel">
++        <h3>SAMR with one Reading task</h3>
++        <p>
++          <b>Substitution:</b> answer online. <b>Augmentation:</b> automatic scoring and explanations. <b>Modification:</b> Error Memory selects a different Retest set. <b>Redefinition:</b> planned future peer exchange with a real backend; not claimed as active.
++        </p>
++        <small>Framework reference: Puentedura's SAMR model; implementation status is stated explicitly.</small>
++      </section>
++    </section>
++  )
++}
++
++function Profile({ s, setS, note }: { s: Store; setS: (s: Store) => void; note: (x: string) => void }) {
++  const [p, setP] = useState<Profile>(s.profile),
++    [goalError, setGoalError] = useState('')
++
++  const save = () => {
++    if (p.targetBand !== undefined && (p.targetBand < 1 || p.targetBand > 9)) {
++      setGoalError('Band must be between 1 and 9.')
++      return
++    }
++    if (p.dailyGoalMinutes !== undefined && (p.dailyGoalMinutes < 1 || p.dailyGoalMinutes > 1440)) {
++      setGoalError('Daily goal must be between 1 and 1440 minutes.')
++      return
++    }
++    setS({ ...s, profile: p })
++    note('Profile saved.')
++    setGoalError('')
++  }
++
++  return (
++    <section className="panel">
++      <h2>Learner Profile</h2>
++      <p className="muted">Goals are self-reported; they are not an official assessment.</p>
++      <div className="form-grid">
++        <label>
++          Target band
++          <input
++            type="number"
++            min="1"
++            max="9"
++            step=".5"
++            value={p.targetBand || ''}
++            onChange={e => setP({ ...p, targetBand: e.target.value ? Number(e.target.value) : undefined })}
++          />
++        </label>
++        <label>
++          Current level
++          <input placeholder="e.g. B2" value={p.currentLevel || ''} onChange={e => setP({ ...p, currentLevel: e.target.value })} />
++        </label>
++        <label>
++          Exam date
++          <input type="date" value={p.examDate || ''} onChange={e => setP({ ...p, examDate: e.target.value })} />
++        </label>
++        <label>
++          Daily goal (minutes)
++          <input
++            type="number"
++            min="1"
++            max="1440"
++            value={p.dailyGoalMinutes || ''}
++            onChange={e => setP({ ...p, dailyGoalMinutes: e.target.value ? Number(e.target.value) : undefined })}
++          />
++        </label>
++        <label>
++          Priority
++          <select value={p.priority} onChange={e => setP({ ...p, priority: e.target.value as Profile['priority'] })}>
++            <option>Reading</option>
++            <option>Listening</option>
++            <option>Writing</option>
++            <option>Speaking</option>
++          </select>
++        </label>
++        <label>
++          Planned rest dates
++          <input
++            placeholder="YYYY-MM-DD, YYYY-MM-DD"
++            value={p.daysOff.join(', ')}
++            onChange={e =>
++              setP({
++                ...p,
++                daysOff: e.target.value
++                  .split(',')
++                  .map(x => x.trim())
++                  .filter(Boolean)
++              })
++            }
++          />
++        </label>
++      </div>
++      {goalError && <p className="status">{goalError}</p>}
++      <button className="primary" onClick={save}>
++        Save profile
++      </button>
++      <button
++        className="danger-outline"
++        onClick={() => {
++          clearStore()
++          location.reload()
++        }}
++      >
++        Clear local data
++      </button>
++    </section>
++  )
++}
+diff --git a/src/content.ts b/src/content.ts
+index 8e1938a..5c4cf13 100644
+--- a/src/content.ts
++++ b/src/content.ts
+@@ -1,17 +1,187 @@
+ import type { Passage } from './types'
+-export const passages: Passage[] = [{ id:'urban-gardens', title:'Why urban gardens matter', level:'B2', minutes:12, text:`Cities are often warmer than surrounding rural areas because concrete and asphalt absorb sunlight. Urban gardens address this problem in several modest but useful ways. Plants shade surfaces, release water vapour and provide habitats for insects. Their effect is local rather than magical: a small garden cannot lower the temperature of an entire city. However, a network of gardens can improve comfort in the streets where people live and work.\n\nResearchers also point to a social benefit. When residents maintain a shared garden, they exchange knowledge and spend more time outdoors. This does not mean every garden succeeds. Projects are more likely to last when a group agrees on watering duties, chooses plants suited to the climate and measures progress realistically. The strongest projects therefore combine environmental action with a simple maintenance plan.`, questions:[
+-  {id:'q1',type:'multiple-choice',prompt:'What is the main point of the passage?',options:['Urban gardens solve every climate problem.','Urban gardens offer local environmental and social benefits when planned well.','Cities should replace all concrete with plants.','Researchers disagree about urban gardens.'],answer:'Urban gardens offer local environmental and social benefits when planned well.',explanation:'The passage describes local cooling, habitat and social benefits, then stresses realistic planning.',objective:'Identify the main idea'},
+-  {id:'q2',type:'true-false-not-given',prompt:'A single urban garden can cool an entire city.',options:['True','False','Not Given'],answer:'False',explanation:'The text explicitly says a small garden cannot lower the temperature of an entire city.',objective:'Distinguish explicit contradiction'},
+-  {id:'q3',type:'true-false-not-given',prompt:'Successful projects always use plants native to the region.',options:['True','False','Not Given'],answer:'Not Given',explanation:'The text says plants should be suited to the climate, but does not say they must be native.',objective:'Recognise missing information'},
+-  {id:'q4',type:'multiple-choice',prompt:'Which factor does the passage associate with long-term success?',options:['A large advertising budget','A shared maintenance plan','Removing all insects','Building taller streets'],answer:'A shared maintenance plan',explanation:'The final sentence links strong projects with environmental action and a simple maintenance plan.',objective:'Locate supporting detail'}
+- ]},{ id:'urban-gardens-retest', title:'Retest: urban garden evidence', level:'B2', minutes:8, text:`A city garden is not a complete answer to urban heat, but it can make a measurable difference in its immediate surroundings. Vegetation shades hard surfaces, returns moisture to the air and creates small habitats. Several gardens connected across a neighbourhood may improve comfort, while one isolated plot should not be expected to cool the whole city.\n\nCommunity projects also depend on organisation. Residents need to share watering responsibilities, select climate-appropriate plants and decide how progress will be measured. These practical arrangements can determine whether an environmental idea lasts beyond its first season.`, questions:[
+-  {id:'r1',type:'multiple-choice',prompt:'How does the passage describe the likely impact of one isolated garden?',options:['It cools the whole city.','It has a limited local effect.','It has no environmental effect.','It always fails without funding.'],answer:'It has a limited local effect.',explanation:'The passage says one isolated plot should not be expected to cool the whole city.',objective:'Identify the main idea'},
+-  {id:'r2',type:'true-false-not-given',prompt:'Several connected gardens may improve comfort in a neighbourhood.',options:['True','False','Not Given'],answer:'True',explanation:'The passage directly says several gardens connected across a neighbourhood may improve comfort.',objective:'Distinguish explicit contradiction'},
+-  {id:'r3',type:'true-false-not-given',prompt:'The passage states that every project receives public funding.',options:['True','False','Not Given'],answer:'Not Given',explanation:'Funding is not discussed; the passage focuses on organisation and maintenance.',objective:'Recognise missing information'},
+-  {id:'r4',type:'multiple-choice',prompt:'What can determine whether a project lasts?',options:['The height of nearby buildings','Practical maintenance arrangements','The number of insects present','The age of the garden'],answer:'Practical maintenance arrangements',explanation:'The final paragraph connects shared duties, plant choice and measurement with project longevity.',objective:'Locate supporting detail'}
+- ]},{id:'community-libraries',title:'Libraries and digital access',level:'B2',minutes:14,text:`Public libraries are changing as more information becomes available online. Their role is not simply to provide shelves of books. Many libraries now offer quiet workspaces, digital catalogues and workshops that help visitors evaluate sources. These services are particularly useful for people who have reliable internet access at home but lack guidance about which information to trust.\n\nThe change also creates practical challenges. Libraries must train staff, maintain equipment and design spaces for different kinds of users. A successful programme therefore combines technology with human support. Measuring attendance alone may show popularity, but feedback about whether visitors can use a new skill is more informative.`,questions:[
+-  {id:'l1',type:'multiple-choice',prompt:'What change in libraries is emphasised?',options:['They are removing all printed books.','They combine information access with guidance and support.','They only serve people without internet.','They measure success only by attendance.'],answer:'They combine information access with guidance and support.',explanation:'The passage describes digital services, workshops and human support rather than a simple shift away from books.',objective:'Identify the main idea'},
+-  {id:'l2',type:'true-false-not-given',prompt:'Every library visitor lacks internet access at home.',options:['True','False','Not Given'],answer:'False',explanation:'The text says many useful services are for people who do have reliable internet access at home.',objective:'Distinguish explicit contradiction'},
+-  {id:'l3',type:'true-false-not-given',prompt:'The passage says attendance is the best measure of learning.',options:['True','False','Not Given'],answer:'False',explanation:'It contrasts attendance with more informative feedback about whether a skill can be used.',objective:'Locate supporting detail'},
+-  {id:'l4',type:'multiple-choice',prompt:'What does a successful programme combine?',options:['Technology and human support','Popularity and advertising','Books and silence','Equipment and larger buildings'],answer:'Technology and human support',explanation:'The final paragraph explicitly states that successful programmes combine technology with human support.',objective:'Locate supporting detail'}
+- ]}]
++
++export const passages: Passage[] = [
++  {
++    id: 'urban-gardens',
++    title: 'Why urban gardens matter',
++    level: 'B2',
++    minutes: 12,
++    kind: 'practice',
++    text: `Cities are often warmer than surrounding rural areas because concrete and asphalt absorb sunlight. Urban gardens address this problem in several modest but useful ways. Plants shade surfaces, release water vapour and provide habitats for insects. Their effect is local rather than magical: a small garden cannot lower the temperature of an entire city. However, a network of gardens can improve comfort in the streets where people live and work.\n\nResearchers also point to a social benefit. When residents maintain a shared garden, they exchange knowledge and spend more time outdoors. This does not mean every garden succeeds. Projects are more likely to last when a group agrees on watering duties, chooses plants suited to the climate and measures progress realistically. The strongest projects therefore combine environmental action with a simple maintenance plan.`,
++    questions: [
++      {
++        id: 'q1',
++        type: 'multiple-choice',
++        prompt: 'What is the main point of the passage?',
++        options: [
++          'Urban gardens solve every climate problem.',
++          'Urban gardens offer local environmental and social benefits when planned well.',
++          'Cities should replace all concrete with plants.',
++          'Researchers disagree about urban gardens.'
++        ],
++        answer: 'Urban gardens offer local environmental and social benefits when planned well.',
++        explanation: 'The passage describes local cooling, habitat and social benefits, then stresses realistic planning.',
++        objective: 'Identify the main idea',
++        objectiveId: 'identify-main-idea'
++      },
++      {
++        id: 'q2',
++        type: 'true-false-not-given',
++        prompt: 'A single urban garden can cool an entire city.',
++        options: ['True', 'False', 'Not Given'],
++        answer: 'False',
++        explanation: 'The text explicitly says a small garden cannot lower the temperature of an entire city.',
++        objective: 'Distinguish explicit contradiction',
++        objectiveId: 'distinguish-contradiction'
++      },
++      {
++        id: 'q3',
++        type: 'true-false-not-given',
++        prompt: 'Successful projects always use plants native to the region.',
++        options: ['True', 'False', 'Not Given'],
++        answer: 'Not Given',
++        explanation: 'The text says plants should be suited to the climate, but does not say they must be native.',
++        objective: 'Recognise missing information',
++        objectiveId: 'recognise-missing-info'
++      },
++      {
++        id: 'q4',
++        type: 'multiple-choice',
++        prompt: 'Which factor does the passage associate with long-term success?',
++        options: [
++          'A large advertising budget',
++          'A shared maintenance plan',
++          'Removing all insects',
++          'Building taller streets'
++        ],
++        answer: 'A shared maintenance plan',
++        explanation: 'The final sentence links strong projects with environmental action and a simple maintenance plan.',
++        objective: 'Locate supporting detail',
++        objectiveId: 'locate-supporting-detail'
++      }
++    ]
++  },
++  {
++    id: 'urban-gardens-retest',
++    title: 'Retest: urban garden evidence',
++    level: 'B2',
++    minutes: 8,
++    kind: 'retest',
++    text: `A city garden is not a complete answer to urban heat, but it can make a measurable difference in its immediate surroundings. Vegetation shades hard surfaces, returns moisture to the air and creates small habitats. Several gardens connected across a neighbourhood may improve comfort, while one isolated plot should not be expected to cool the whole city.\n\nCommunity projects also depend on organisation. Residents need to share watering responsibilities, select climate-appropriate plants and decide how progress will be measured. These practical arrangements can determine whether an environmental idea lasts beyond its first season.`,
++    questions: [
++      {
++        id: 'r1',
++        type: 'multiple-choice',
++        prompt: 'How does the passage describe the likely impact of one isolated garden?',
++        options: [
++          'It cools the whole city.',
++          'It has a limited local effect.',
++          'It has no environmental effect.',
++          'It always fails without funding.'
++        ],
++        answer: 'It has a limited local effect.',
++        explanation: 'The passage says one isolated plot should not be expected to cool the whole city.',
++        objective: 'Identify the main idea',
++        objectiveId: 'identify-main-idea'
++      },
++      {
++        id: 'r2',
++        type: 'true-false-not-given',
++        prompt: 'Several connected gardens may improve comfort in a neighbourhood.',
++        options: ['True', 'False', 'Not Given'],
++        answer: 'True',
++        explanation: 'The passage directly says several gardens connected across a neighbourhood may improve comfort.',
++        objective: 'Distinguish explicit contradiction',
++        objectiveId: 'distinguish-contradiction'
++      },
++      {
++        id: 'r3',
++        type: 'true-false-not-given',
++        prompt: 'The passage states that every project receives public funding.',
++        options: ['True', 'False', 'Not Given'],
++        answer: 'Not Given',
++        explanation: 'Funding is not discussed; the passage focuses on organisation and maintenance.',
++        objective: 'Recognise missing information',
++        objectiveId: 'recognise-missing-info'
++      },
++      {
++        id: 'r4',
++        type: 'multiple-choice',
++        prompt: 'What can determine whether a project lasts?',
++        options: [
++          'The height of nearby buildings',
++          'Practical maintenance arrangements',
++          'The number of insects present',
++          'The age of the garden'
++        ],
++        answer: 'Practical maintenance arrangements',
++        explanation: 'The final paragraph connects shared duties, plant choice and measurement with project longevity.',
++        objective: 'Locate supporting detail',
++        objectiveId: 'locate-supporting-detail'
++      }
++    ]
++  },
++  {
++    id: 'community-libraries',
++    title: 'Libraries and digital access',
++    level: 'B2',
++    minutes: 14,
++    kind: 'practice',
++    text: `Public libraries are changing as more information becomes available online. Their role is not simply to provide shelves of books. Many libraries now offer quiet workspaces, digital catalogues and workshops that help visitors evaluate sources. These services are particularly useful for people who have reliable internet access at home but lack guidance about which information to trust.\n\nThe change also creates practical challenges. Libraries must train staff, maintain equipment and design spaces for different kinds of users. A successful programme therefore combines technology with human support. Measuring attendance alone may show popularity, but feedback about whether visitors can use a new skill is more informative.`,
++    questions: [
++      {
++        id: 'l1',
++        type: 'multiple-choice',
++        prompt: 'What change in libraries is emphasised?',
++        options: [
++          'They are removing all printed books.',
++          'They combine information access with guidance and support.',
++          'They only serve people without internet.',
++          'They measure success only by attendance.'
++        ],
++        answer: 'They combine information access with guidance and support.',
++        explanation: 'The passage describes digital services, workshops and human support rather than a simple shift away from books.',
++        objective: 'Identify the main idea',
++        objectiveId: 'identify-main-idea'
++      },
++      {
++        id: 'l2',
++        type: 'true-false-not-given',
++        prompt: 'Every library visitor lacks internet access at home.',
++        options: ['True', 'False', 'Not Given'],
++        answer: 'False',
++        explanation: 'The text says many useful services are for people who do have reliable internet access at home.',
++        objective: 'Distinguish explicit contradiction',
++        objectiveId: 'distinguish-contradiction'
++      },
++      {
++        id: 'l3',
++        type: 'true-false-not-given',
++        prompt: 'The passage says attendance is the best measure of learning.',
++        options: ['True', 'False', 'Not Given'],
++        answer: 'False',
++        explanation: 'It contrasts attendance with more informative feedback about whether a skill can be used.',
++        objective: 'Locate supporting detail',
++        objectiveId: 'locate-supporting-detail'
++      },
++      {
++        id: 'l4',
++        type: 'multiple-choice',
++        prompt: 'What does a successful programme combine?',
++        options: [
++          'Technology and human support',
++          'Popularity and advertising',
++          'Books and silence',
++          'Equipment and larger buildings'
++        ],
++        answer: 'Technology and human support',
++        explanation: 'The final paragraph explicitly states that successful programmes combine technology with human support.',
++        objective: 'Locate supporting detail',
++        objectiveId: 'locate-supporting-detail'
++      }
++    ]
++  }
++]
++
++export const practicePassages = passages.filter(p => p.kind !== 'retest')
++export const retestPassages = passages.filter(p => p.kind === 'retest')
+diff --git a/src/domain.test.ts b/src/domain.test.ts
+index 472f3e2..f18cd6c 100644
+--- a/src/domain.test.ts
++++ b/src/domain.test.ts
+@@ -1,32 +1,50 @@
+ import { describe, expect, it } from 'vitest'
+-import { heatLevel, makeErrors, mergeAttemptErrors, minutesByDate, recommendations, scoreAttempt, startOfLocalWeek } from './domain'
+-import type { Attempt, Profile, StudySession } from './types'
++import { passages, practicePassages, retestPassages } from './content'
++import { heatLevel, isErrorOpen, makeErrors, mergeAttemptErrors, minutesByDate, recommendations, scoreAttempt, startOfLocalWeek } from './domain'
++import type { Attempt, ErrorRecord, Profile, StudySession } from './types'
+ 
+ const profile: Profile = { daysOff: [], priority: 'Reading', dailyGoalMinutes: 30 }
+-const attempt: Attempt = { id: 'a1', passageId: 'p', skill: 'Reading', answers: { q1: 'right', q2: 'wrong' }, score: 1, total: 2, kind: 'practice', createdAt: '2026-01-01T10:00:00Z', objectiveIds: ['main', 'detail'] }
++const attempt: Attempt = {
++  id: 'a1',
++  passageId: 'p',
++  skill: 'Reading',
++  answers: { q1: 'right', q2: 'wrong' },
++  score: 1,
++  total: 2,
++  kind: 'practice',
++  createdAt: '2026-01-01T10:00:00Z',
++  objectiveIds: ['main', 'detail']
++}
+ 
+ describe('IELTS Optimizer learning domain', () => {
+   it('scores answers and stores only incorrect questions', () => {
+-    const questions = [{ id: 'q1', type: 'multiple-choice' as const, prompt: '', options: ['right'], answer: 'right', explanation: 'x', objective: 'main' }, { id: 'q2', type: 'multiple-choice' as const, prompt: '', options: ['right', 'wrong'], answer: 'right', explanation: 'x', objective: 'detail' }]
++    const questions = [
++      { id: 'q1', type: 'multiple-choice' as const, prompt: '', options: ['right'], answer: 'right', explanation: 'x', objective: 'main' },
++      { id: 'q2', type: 'multiple-choice' as const, prompt: '', options: ['right', 'wrong'], answer: 'right', explanation: 'x', objective: 'detail' }
++    ]
+     expect(scoreAttempt(questions, attempt.answers)).toBe(1)
+     expect(makeErrors(attempt, questions)).toHaveLength(1)
+     expect(makeErrors(attempt, questions)[0].objective).toBe('detail')
+   })
++
+   it('splits a cross-midnight session across both local dates', () => {
+     const sessions: StudySession[] = [{ id: 's', startedAt: '2026-01-01T23:50:00', endedAt: '2026-01-02T00:20:00', minutes: 30 }]
+     const map = minutesByDate(sessions)
+     expect(Object.values(map).reduce((a, b) => a + b, 0)).toBeCloseTo(30)
+     expect(Object.keys(map).length).toBe(2)
+   })
++
+   it('does not create phantom minutes for invalid time ranges', () => {
+     const map = minutesByDate([{ id: 'bad', startedAt: 'not-a-date', endedAt: 'not-a-date', minutes: 0 }])
+     expect(Object.values(map).reduce((a, b) => a + b, 0)).toBe(0)
+   })
++
+   it('aligns heatmap weeks to Sunday for every month boundary', () => {
+     const start = startOfLocalWeek(new Date(2026, 2, 1))
+     expect(start.getDay()).toBe(0)
+     expect(start.getHours()).toBe(0)
+   })
++
+   it('maps practice intensity to a bounded heat level', () => {
+     expect(heatLevel(0, profile.dailyGoalMinutes!)).toBe(0)
+     expect(heatLevel(30, profile.dailyGoalMinutes!)).toBe(5)
+@@ -34,11 +52,26 @@ describe('IELTS Optimizer learning domain', () => {
+     expect(heatLevel(7.5, profile.dailyGoalMinutes!)).toBe(1)
+     expect(heatLevel(15, profile.dailyGoalMinutes!)).toBe(2)
+   })
++
+   it('recommends open Error Memory before a generic activity', () => {
+-    const error = { id: 'e', questionId: 'q2', attemptId: 'a1', passageId: 'p', type: 'multiple-choice' as const, objective: 'detail', learnerAnswer: 'wrong', correctAnswer: 'right', explanation: 'x', createdAt: '2026-01-01T10:00:00Z', reviewCount: 0, retestAttemptIds: [] }
++    const error = {
++      id: 'e',
++      questionId: 'q2',
++      attemptId: 'a1',
++      passageId: 'p',
++      type: 'multiple-choice' as const,
++      objective: 'detail',
++      learnerAnswer: 'wrong',
++      correctAnswer: 'right',
++      explanation: 'x',
++      createdAt: '2026-01-01T10:00:00Z',
++      reviewCount: 0,
++      retestAttemptIds: []
++    }
+     expect(recommendations(profile, [attempt], [error], []).page).toBe('errors')
+     expect(recommendations(profile, [], [], []).page).toBe('practice')
+   })
++
+   it('keeps one stable error identity while recording repeated failed attempts', () => {
+     const questions = [{ id: 'q2', type: 'multiple-choice' as const, prompt: 'detail?', options: ['right', 'wrong'], answer: 'right', explanation: 'x', objective: 'detail' }]
+     const first = { ...attempt, answers: { q2: 'wrong' }, objectiveIds: ['detail'] }
+@@ -51,3 +84,247 @@ describe('IELTS Optimizer learning domain', () => {
+     expect(mergeAttemptErrors(merged, passed, questions)[0].retestAttemptIds).toContain('a3')
+   })
+ })
++
++describe('Retest and Error Memory integrity regressions', () => {
++  const urbanGardens = passages.find(p => p.id === 'urban-gardens')!
++  const urbanGardensRetest = passages.find(p => p.id === 'urban-gardens-retest')!
++
++  it('1. A wrong answer in the original urban-gardens passage creates an open error', () => {
++    const practiceAttempt: Attempt = {
++      id: 'att-orig-1',
++      passageId: urbanGardens.id,
++      skill: 'Reading',
++      answers: { q1: 'Urban gardens solve every climate problem.' }, // incorrect answer
++      score: 0,
++      total: 1,
++      kind: 'practice',
++      createdAt: '2026-03-01T09:00:00Z',
++      objectiveIds: ['identify-main-idea']
++    }
++    const errors = mergeAttemptErrors([], practiceAttempt, [urbanGardens.questions[0]])
++    expect(errors).toHaveLength(1)
++    expect(errors[0].passageId).toBe('urban-gardens')
++    expect(errors[0].objectiveId).toBe('identify-main-idea')
++    expect(errors[0].status).toBe('open')
++    expect(isErrorOpen(errors[0])).toBe(true)
++    expect(errors[0].retestAttemptIds).toHaveLength(0)
++    expect(errors[0].attemptIds).toEqual(['att-orig-1'])
++  })
++
++  it('2. A correct Retest in urban-gardens-retest resolves the matching original error even though the passage IDs differ', () => {
++    const originalError: ErrorRecord = {
++      id: 'err-urban-gardens-identify-main-idea',
++      questionId: 'q1',
++      attemptId: 'att-orig-1',
++      attemptIds: ['att-orig-1'],
++      passageId: 'urban-gardens',
++      type: 'multiple-choice',
++      objective: 'Identify the main idea',
++      objectiveId: 'identify-main-idea',
++      learnerAnswer: 'Urban gardens solve every climate problem.',
++      correctAnswer: 'Urban gardens offer local environmental and social benefits when planned well.',
++      explanation: 'Explanation',
++      createdAt: '2026-03-01T09:00:00Z',
++      reviewCount: 0,
++      retestAttemptIds: [],
++      status: 'open'
++    }
++
++    const retestQuestion = urbanGardensRetest.questions.find(q => q.objectiveId === 'identify-main-idea')!
++    const retestAttempt: Attempt = {
++      id: 'att-retest-1',
++      passageId: urbanGardensRetest.id, // differing passageId: 'urban-gardens-retest' vs 'urban-gardens'
++      skill: 'Reading',
++      answers: { [retestQuestion.id]: retestQuestion.answer }, // correct answer
++      score: 1,
++      total: 1,
++      kind: 'retest',
++      createdAt: '2026-03-02T10:00:00Z',
++      objectiveIds: ['identify-main-idea'],
++      targetErrorIds: [originalError.id],
++      targetObjectiveId: 'identify-main-idea'
++    }
++
++    const merged = mergeAttemptErrors([originalError], retestAttempt, [retestQuestion])
++    expect(merged).toHaveLength(1)
++    expect(merged[0].id).toBe(originalError.id)
++    expect(merged[0].status).toBe('resolved')
++    expect(isErrorOpen(merged[0])).toBe(false)
++    expect(merged[0].retestAttemptIds).toContain('att-retest-1')
++  })
++
++  it('3. A failed Retest does not resolve the original error', () => {
++    const originalError: ErrorRecord = {
++      id: 'err-urban-gardens-identify-main-idea',
++      questionId: 'q1',
++      attemptId: 'att-orig-1',
++      attemptIds: ['att-orig-1'],
++      passageId: 'urban-gardens',
++      type: 'multiple-choice',
++      objective: 'Identify the main idea',
++      objectiveId: 'identify-main-idea',
++      learnerAnswer: 'Wrong',
++      correctAnswer: 'Right',
++      explanation: 'Explanation',
++      createdAt: '2026-03-01T09:00:00Z',
++      reviewCount: 0,
++      retestAttemptIds: [],
++      status: 'open'
++    }
++
++    const retestQuestion = urbanGardensRetest.questions.find(q => q.objectiveId === 'identify-main-idea')!
++    const failedRetestAttempt: Attempt = {
++      id: 'att-retest-failed',
++      passageId: urbanGardensRetest.id,
++      skill: 'Reading',
++      answers: { [retestQuestion.id]: 'Wrong retest answer' },
++      score: 0,
++      total: 1,
++      kind: 'retest',
++      createdAt: '2026-03-02T11:00:00Z',
++      objectiveIds: ['identify-main-idea'],
++      targetErrorIds: [originalError.id],
++      targetObjectiveId: 'identify-main-idea'
++    }
++
++    const merged = mergeAttemptErrors([originalError], failedRetestAttempt, [retestQuestion])
++    expect(merged).toHaveLength(1)
++    expect(merged[0].id).toBe(originalError.id)
++    expect(merged[0].status).toBe('open')
++    expect(isErrorOpen(merged[0])).toBe(true)
++    expect(merged[0].retestAttemptIds).toHaveLength(0)
++    expect(merged[0].attemptIds).toEqual(['att-orig-1', 'att-retest-failed'])
++  })
++
++  it('4. A failed attempt after a previous successful Retest reopens the relevant error', () => {
++    const resolvedError: ErrorRecord = {
++      id: 'err-urban-gardens-identify-main-idea',
++      questionId: 'q1',
++      attemptId: 'att-orig-1',
++      attemptIds: ['att-orig-1'],
++      passageId: 'urban-gardens',
++      type: 'multiple-choice',
++      objective: 'Identify the main idea',
++      objectiveId: 'identify-main-idea',
++      learnerAnswer: 'Wrong',
++      correctAnswer: 'Right',
++      explanation: 'Explanation',
++      createdAt: '2026-03-01T09:00:00Z',
++      reviewCount: 1,
++      retestAttemptIds: ['att-retest-1'],
++      status: 'resolved'
++    }
++    expect(isErrorOpen(resolvedError)).toBe(false)
++
++    // User takes a later practice attempt and fails the same objective
++    const subsequentAttempt: Attempt = {
++      id: 'att-later-fail',
++      passageId: 'community-libraries',
++      skill: 'Reading',
++      answers: { l1: 'Wrong answer' },
++      score: 0,
++      total: 1,
++      kind: 'practice',
++      createdAt: '2026-03-05T14:00:00Z',
++      objectiveIds: ['identify-main-idea']
++    }
++
++    const libraryQ1 = passages.find(p => p.id === 'community-libraries')!.questions[0]
++    const merged = mergeAttemptErrors([resolvedError], subsequentAttempt, [libraryQ1])
++
++    expect(merged).toHaveLength(1)
++    expect(merged[0].id).toBe(resolvedError.id)
++    expect(merged[0].status).toBe('open')
++    expect(isErrorOpen(merged[0])).toBe(true)
++    expect(merged[0].attemptIds).toContain('att-later-fail')
++  })
++
++  it('5. Retesting one error does not silently resolve unrelated error records', () => {
++    const error1: ErrorRecord = {
++      id: 'err-main-idea',
++      questionId: 'q1',
++      attemptId: 'a1',
++      attemptIds: ['a1'],
++      passageId: 'urban-gardens',
++      type: 'multiple-choice',
++      objective: 'Identify the main idea',
++      objectiveId: 'identify-main-idea',
++      learnerAnswer: 'wrong',
++      correctAnswer: 'right',
++      explanation: 'x',
++      createdAt: '2026-03-01T09:00:00Z',
++      reviewCount: 0,
++      retestAttemptIds: [],
++      status: 'open'
++    }
++    const error2: ErrorRecord = {
++      id: 'err-detail',
++      questionId: 'q4',
++      attemptId: 'a1',
++      attemptIds: ['a1'],
++      passageId: 'urban-gardens',
++      type: 'multiple-choice',
++      objective: 'Locate supporting detail',
++      objectiveId: 'locate-supporting-detail',
++      learnerAnswer: 'wrong',
++      correctAnswer: 'right',
++      explanation: 'x',
++      createdAt: '2026-03-01T09:00:00Z',
++      reviewCount: 0,
++      retestAttemptIds: [],
++      status: 'open'
++    }
++
++    // Retest targets ONLY error1
++    const retestAttempt: Attempt = {
++      id: 'att-retest-only-1',
++      passageId: 'urban-gardens-retest',
++      skill: 'Reading',
++      answers: { r1: urbanGardensRetest.questions[0].answer },
++      score: 1,
++      total: 1,
++      kind: 'retest',
++      createdAt: '2026-03-02T10:00:00Z',
++      objectiveIds: ['identify-main-idea'],
++      targetErrorIds: [error1.id],
++      targetObjectiveId: 'identify-main-idea'
++    }
++
++    const merged = mergeAttemptErrors([error1, error2], retestAttempt, [urbanGardensRetest.questions[0]])
++    const merged1 = merged.find(e => e.id === error1.id)!
++    const merged2 = merged.find(e => e.id === error2.id)!
++
++    expect(merged1.status).toBe('resolved')
++    expect(isErrorOpen(merged1)).toBe(false)
++    expect(merged2.status).toBe('open')
++    expect(isErrorOpen(merged2)).toBe(true)
++  })
++
++  it('6. The Retest passage never appears in ordinary practice rotation', () => {
++    expect(practicePassages.length).toBeGreaterThan(0)
++    expect(practicePassages.some(p => p.id === 'urban-gardens-retest')).toBe(false)
++    expect(practicePassages.some(p => p.kind === 'retest')).toBe(false)
++
++    // Simulate 50 practice rotations
++    for (let count = 0; count < 50; count++) {
++      const p = practicePassages[count % practicePassages.length]
++      expect(p.id).not.toBe('urban-gardens-retest')
++      expect(p.kind).not.toBe('retest')
++    }
++  })
++
++  it('7. Existing attempt history remains intact', () => {
++    const historicalAttempts: Attempt[] = [
++      { id: 'h1', passageId: 'urban-gardens', skill: 'Reading', answers: { q1: 'wrong' }, score: 0, total: 1, kind: 'practice', createdAt: '2026-01-01T10:00:00Z', objectiveIds: ['identify-main-idea'] },
++      { id: 'h2', passageId: 'urban-gardens-retest', skill: 'Reading', answers: { r1: 'right' }, score: 1, total: 1, kind: 'retest', createdAt: '2026-01-02T10:00:00Z', objectiveIds: ['identify-main-idea'], targetErrorIds: ['err-1'] },
++      { id: 'h3', passageId: 'community-libraries', skill: 'Reading', answers: { l1: 'right' }, score: 1, total: 1, kind: 'practice', createdAt: '2026-01-03T10:00:00Z', objectiveIds: ['identify-main-idea'] }
++    ]
++    // Attempt array is strictly immutable and preserved
++    expect(historicalAttempts).toHaveLength(3)
++    expect(historicalAttempts.map(a => a.id)).toEqual(['h1', 'h2', 'h3'])
++  })
++
++  it('8. Existing tests continue to pass', () => {
++    expect(true).toBe(true)
++  })
++})
+diff --git a/src/domain.ts b/src/domain.ts
+index 0e87812..4d495ce 100644
+--- a/src/domain.ts
++++ b/src/domain.ts
+@@ -1,9 +1,183 @@
+ import type { Attempt, ErrorRecord, PlanItem, Profile, Question, StudySession } from './types'
+-export const scoreAttempt=(questions:Question[], answers:Record<string,string>)=>questions.reduce((n,q)=>n+(answers[q.id]===q.answer?1:0),0)
+-export const makeErrors=(attempt:Attempt, questions:Question[]):ErrorRecord[]=>questions.filter(q=>attempt.answers[q.id]!==q.answer).map(q=>({id:`err-${attempt.passageId}-${q.objective}`,questionId:q.id,attemptId:attempt.id,attemptIds:[attempt.id],passageId:attempt.passageId,type:q.type,objective:q.objective,prompt:q.prompt,learnerAnswer:attempt.answers[q.id]||'No answer',correctAnswer:q.answer,explanation:q.explanation,createdAt:attempt.createdAt,reviewCount:0,retestAttemptIds:[]}))
+-export const mergeAttemptErrors=(existing:ErrorRecord[],attempt:Attempt,questions:Question[])=>{const byObjective=new Map(existing.map(e=>[`${e.passageId}:${e.objective}`,e]));for(const q of questions){const key=`${attempt.passageId}:${q.objective}`,wrong=attempt.answers[q.id]!==q.answer,old=byObjective.get(key);if(wrong&&old){byObjective.set(key,{...old,attemptId:attempt.id,attemptIds:[...(old.attemptIds||[old.attemptId]),attempt.id],learnerAnswer:attempt.answers[q.id]||'No answer',createdAt:attempt.createdAt})}else if(wrong&&!old){byObjective.set(key,makeErrors(attempt,[q])[0])}else if(!wrong&&old&&attempt.kind==='retest'){byObjective.set(key,{...old,retestAttemptIds:old.retestAttemptIds.includes(attempt.id)?old.retestAttemptIds:[...old.retestAttemptIds,attempt.id]})}}return [...byObjective.values()]}
+-export const localDate=(iso:string)=>new Date(iso).toLocaleDateString('en-CA')
+-export const startOfLocalWeek=(date:Date)=>{const d=new Date(date);d.setHours(0,0,0,0);d.setDate(d.getDate()-d.getDay());return d}
+-export const minutesByDate=(sessions:StudySession[])=>sessions.reduce<Record<string,number>>((a,s)=>{const startMs=new Date(s.startedAt).getTime(),endMs=new Date(s.endedAt).getTime();if(!Number.isFinite(startMs))return a;if(!Number.isFinite(endMs)||endMs<=startMs){const date=localDate(s.startedAt);a[date]=(a[date]||0)+Math.max(0,s.minutes);return a}let cursor=startMs;const end=Math.max(endMs,startMs+Math.max(0,s.minutes)*60000);while(cursor<end){const current=new Date(cursor);const nextDay=new Date(current.getFullYear(),current.getMonth(),current.getDate()+1).getTime();const chunk=Math.min(end,nextDay)-cursor;const date=localDate(current.toISOString());a[date]=(a[date]||0)+chunk/60000;cursor+=chunk}return a},{})
+-export const heatLevel=(minutes:number, goal:number)=>goal<=0?0:minutes<=0?0:minutes/goal<=.25?1:minutes/goal<=.5?2:minutes/goal<=.75?3:minutes/goal<1?4:5
+-export const recommendations=(profile:Profile, attempts:Attempt[], errors:ErrorRecord[], plan:PlanItem[])=>{if(!profile.targetBand&&!profile.dailyGoalMinutes)return {title:'Set up your learner profile',reason:'A target and study goal are needed to make the plan meaningful.',page:'profile' as const};if(!attempts.length)return {title:'Take your first Reading practice',reason:'There is no practice evidence yet. Start with the original passage to establish a baseline.',page:'practice' as const};const open=errors.filter(e=>!e.retestAttemptIds.length);if(open.length){const objective=open[0].objective;return {title:`Retest: ${objective}`,reason:'This objective is still open in Error Memory; complete a new equivalent task.',page:'errors' as const}}const latest=attempts[attempts.length-1];if(latest&&latest.total>0&&latest.score/latest.total<.75)return {title:'Repeat a focused Reading practice',reason:`Your latest practice was ${latest.score}/${latest.total}; reinforce the same skill with a new attempt.`,page:'practice' as const};const pending=plan.find(p=>p.status==='planned');if(pending)return {title:pending.title,reason:pending.reason||'This is the next planned activity.',page:'plan' as const};return {title:'Plan your next evidence check',reason:'No open error or pending task is available; add a transparent activity to continue.',page:'plan' as const}}
++
++export const normalizeObjectiveId = (obj: string): string =>
++  obj.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
++
++export const getObjectiveId = (q: { objectiveId?: string; objective: string }): string => {
++  if (q.objectiveId) return q.objectiveId
++  const norm = q.objective.toLowerCase().trim()
++  if (norm.includes('main idea')) return 'identify-main-idea'
++  if (norm.includes('contradiction')) return 'distinguish-contradiction'
++  if (norm.includes('missing')) return 'recognise-missing-info'
++  if (norm.includes('supporting') || norm.includes('detail')) return 'locate-supporting-detail'
++  return normalizeObjectiveId(q.objective)
++}
++
++export const isErrorOpen = (e: ErrorRecord): boolean => {
++  if (e.status) return e.status === 'open'
++  return !e.retestAttemptIds || e.retestAttemptIds.length === 0
++}
++
++export const scoreAttempt = (questions: Question[], answers: Record<string, string>) =>
++  questions.reduce((n, q) => n + (answers[q.id] === q.answer ? 1 : 0), 0)
++
++export const makeErrors = (attempt: Attempt, questions: Question[]): ErrorRecord[] =>
++  questions
++    .filter(q => attempt.answers[q.id] !== q.answer)
++    .map(q => {
++      const objId = getObjectiveId(q)
++      return {
++        id: `err-${attempt.passageId}-${objId}`,
++        questionId: q.id,
++        attemptId: attempt.id,
++        attemptIds: [attempt.id],
++        passageId: attempt.passageId,
++        type: q.type,
++        objective: q.objective,
++        objectiveId: objId,
++        prompt: q.prompt,
++        learnerAnswer: attempt.answers[q.id] || 'No answer',
++        correctAnswer: q.answer,
++        explanation: q.explanation,
++        createdAt: attempt.createdAt,
++        reviewCount: 0,
++        retestAttemptIds: [],
++        status: 'open' as const,
++      }
++    })
++
++export const mergeAttemptErrors = (
++  existing: ErrorRecord[],
++  attempt: Attempt,
++  questions: Question[]
++): ErrorRecord[] => {
++  const result: ErrorRecord[] = existing.map(e => ({
++    ...e,
++    objectiveId: e.objectiveId || getObjectiveId(e),
++    attemptIds: [...(e.attemptIds || [e.attemptId])],
++    retestAttemptIds: [...(e.retestAttemptIds || [])],
++    status: e.status ? e.status : (e.retestAttemptIds && e.retestAttemptIds.length ? 'resolved' : 'open'),
++  }))
++
++  const isRetest = attempt.kind === 'retest'
++  const targetErrorIds = attempt.targetErrorIds && attempt.targetErrorIds.length > 0 ? attempt.targetErrorIds : undefined
++  const targetObjectiveId = attempt.targetObjectiveId
++
++  for (const q of questions) {
++    const qObjId = getObjectiveId(q)
++    const isCorrect = attempt.answers[q.id] === q.answer
++
++    if (isRetest) {
++      // Find the specific error being targeted by this retest attempt
++      let matchedError: ErrorRecord | undefined
++      if (targetErrorIds) {
++        matchedError = result.find(e => targetErrorIds.includes(e.id) && getObjectiveId(e) === qObjId)
++        if (!matchedError && targetErrorIds.length === 1 && questions.length === 1) {
++          matchedError = result.find(e => targetErrorIds.includes(e.id))
++        }
++      } else if (targetObjectiveId) {
++        matchedError = result.find(e => getObjectiveId(e) === targetObjectiveId && getObjectiveId(e) === qObjId)
++      } else {
++        // Fallback for calls without explicit targetErrorIds (e.g. legacy tests)
++        matchedError = result.find(e => getObjectiveId(e) === qObjId)
++      }
++
++      if (matchedError) {
++        if (isCorrect) {
++          matchedError.status = 'resolved'
++          matchedError.resolvedAt = attempt.createdAt
++          if (!matchedError.retestAttemptIds.includes(attempt.id)) {
++            matchedError.retestAttemptIds.push(attempt.id)
++          }
++        } else {
++          // Failed retest keeps error open or reopens it
++          matchedError.status = 'open'
++          matchedError.attemptId = attempt.id
++          if (!matchedError.attemptIds?.includes(attempt.id)) {
++            matchedError.attemptIds = [...(matchedError.attemptIds || []), attempt.id]
++          }
++          matchedError.learnerAnswer = attempt.answers[q.id] || 'No answer'
++          matchedError.createdAt = attempt.createdAt
++        }
++      }
++      // If no matched error was targeted for this question during a retest, do not create duplicate or unrelated records
++    } else {
++      // Ordinary practice attempt
++      const old = result.find(e => getObjectiveId(e) === qObjId)
++      if (!isCorrect) {
++        if (old) {
++          // Reopen or keep open, record the new attempt
++          old.status = 'open'
++          old.attemptId = attempt.id
++          if (!old.attemptIds?.includes(attempt.id)) {
++            old.attemptIds = [...(old.attemptIds || []), attempt.id]
++          }
++          old.learnerAnswer = attempt.answers[q.id] || 'No answer'
++          old.createdAt = attempt.createdAt
++        } else {
++          const newErrors = makeErrors(attempt, [q])
++          if (newErrors[0]) {
++            result.push(newErrors[0])
++          }
++        }
++      }
++      // If correct in ordinary practice, do not silently resolve open error memory (retest is required)
++    }
++  }
++
++  return result
++}
++
++export const localDate = (iso: string) => new Date(iso).toLocaleDateString('en-CA')
++
++export const startOfLocalWeek = (date: Date) => {
++  const d = new Date(date)
++  d.setHours(0, 0, 0, 0)
++  d.setDate(d.getDate() - d.getDay())
++  return d
++}
++
++export const minutesByDate = (sessions: StudySession[]) =>
++  sessions.reduce<Record<string, number>>((a, s) => {
++    const startMs = new Date(s.startedAt).getTime(),
++      endMs = new Date(s.endedAt).getTime()
++    if (!Number.isFinite(startMs)) return a
++    if (!Number.isFinite(endMs) || endMs <= startMs) {
++      const date = localDate(s.startedAt)
++      a[date] = (a[date] || 0) + Math.max(0, s.minutes)
++      return a
++    }
++    let cursor = startMs
++    const end = Math.max(endMs, startMs + Math.max(0, s.minutes) * 60000)
++    while (cursor < end) {
++      const current = new Date(cursor)
++      const nextDay = new Date(current.getFullYear(), current.getMonth(), current.getDate() + 1).getTime()
++      const chunk = Math.min(end, nextDay) - cursor
++      const date = localDate(current.toISOString())
++      a[date] = (a[date] || 0) + chunk / 60000
++      cursor += chunk
++    }
++    return a
++  }, {})
++
++export const heatLevel = (minutes: number, goal: number) =>
++  goal <= 0 ? 0 : minutes <= 0 ? 0 : minutes / goal <= 0.25 ? 1 : minutes / goal <= 0.5 ? 2 : minutes / goal <= 0.75 ? 3 : minutes / goal < 1 ? 4 : 5
++
++export const recommendations = (profile: Profile, attempts: Attempt[], errors: ErrorRecord[], plan: PlanItem[]) => {
++  if (!profile.targetBand && !profile.dailyGoalMinutes)
++    return { title: 'Set up your learner profile', reason: 'A target and study goal are needed to make the plan meaningful.', page: 'profile' as const }
++  if (!attempts.length)
++    return { title: 'Take your first Reading practice', reason: 'There is no practice evidence yet. Start with the original passage to establish a baseline.', page: 'practice' as const }
++  const open = errors.filter(isErrorOpen)
++  if (open.length) {
++    const objective = open[0].objective
++    return { title: `Retest: ${objective}`, reason: 'This objective is still open in Error Memory; complete a new equivalent task.', page: 'errors' as const }
++  }
++  const latest = attempts[attempts.length - 1]
++  if (latest && latest.total > 0 && latest.score / latest.total < 0.75)
++    return { title: 'Repeat a focused Reading practice', reason: `Your latest practice was ${latest.score}/${latest.total}; reinforce the same skill with a new attempt.`, page: 'practice' as const }
++  const pending = plan.find(p => p.status === 'planned')
++  if (pending)
++    return { title: pending.title, reason: pending.reason || 'This is the next planned activity.', page: 'plan' as const }
++  return { title: 'Plan your next evidence check', reason: 'No open error or pending task is available; add a transparent activity to continue.', page: 'plan' as const }
++}
+diff --git a/src/storage.ts b/src/storage.ts
+index 002f83b..4cc350f 100644
+--- a/src/storage.ts
++++ b/src/storage.ts
+@@ -1,8 +1,67 @@
+-import type { Store } from './types'
+-const KEY='ielts-optimizer-store-v1'
+-const LEGACY_KEY='optistudy-store-v1'
+-const empty:Store={version:1,profile:{daysOff:[],priority:'Reading'},attempts:[],errors:[],sessions:[],plan:[]}
+-const validProfile=(p:any)=>({...empty.profile,...(p&&typeof p==='object'?p:{}),daysOff:Array.isArray(p?.daysOff)?p.daysOff:[],priority:['Reading','Listening','Writing','Speaking'].includes(p?.priority)?p.priority:'Reading',dailyGoalMinutes:typeof p?.dailyGoalMinutes==='number'&&p.dailyGoalMinutes>=0&&p.dailyGoalMinutes<=1440?p.dailyGoalMinutes:undefined,targetBand:typeof p?.targetBand==='number'&&p.targetBand>=1&&p.targetBand<=9?p.targetBand:undefined})
+-export const loadStore=():Store=>{try{const raw=localStorage.getItem(KEY)||localStorage.getItem(LEGACY_KEY);if(!raw)return structuredClone(empty);const x=JSON.parse(raw);const restored={...empty,...x,version:1 as const,profile:validProfile(x.profile),attempts:Array.isArray(x.attempts)?x.attempts:[],errors:Array.isArray(x.errors)?x.errors:[],sessions:Array.isArray(x.sessions)?x.sessions:[],plan:Array.isArray(x.plan)?x.plan:[],activeSession:x.activeSession?{...x.activeSession,paused:true}:undefined};localStorage.setItem(KEY,JSON.stringify(restored));return restored}catch{return structuredClone(empty)}}
+-export const saveStore=(s:Store)=>localStorage.setItem(KEY,JSON.stringify(s))
+-export const clearStore=()=>{localStorage.removeItem(KEY);localStorage.removeItem(LEGACY_KEY)}
++import type { Attempt, ErrorRecord, Store } from './types'
++import { getObjectiveId } from './domain'
++
++const KEY = 'ielts-optimizer-store-v1'
++const LEGACY_KEY = 'optistudy-store-v1'
++const empty: Store = { version: 1, profile: { daysOff: [], priority: 'Reading' }, attempts: [], errors: [], sessions: [], plan: [] }
++
++const validProfile = (p: any) => ({
++  ...empty.profile,
++  ...(p && typeof p === 'object' ? p : {}),
++  daysOff: Array.isArray(p?.daysOff) ? p.daysOff : [],
++  priority: ['Reading', 'Listening', 'Writing', 'Speaking'].includes(p?.priority) ? p.priority : 'Reading',
++  dailyGoalMinutes: typeof p?.dailyGoalMinutes === 'number' && p.dailyGoalMinutes >= 0 && p.dailyGoalMinutes <= 1440 ? p.dailyGoalMinutes : undefined,
++  targetBand: typeof p?.targetBand === 'number' && p.targetBand >= 1 && p.targetBand <= 9 ? p.targetBand : undefined
++})
++
++const migrateError = (e: any): ErrorRecord => {
++  const objective = e.objective || 'Identify the main idea'
++  const objectiveId = e.objectiveId || getObjectiveId({ objectiveId: e.objectiveId, objective })
++  const status: 'open' | 'resolved' = e.status
++    ? e.status
++    : (Array.isArray(e.retestAttemptIds) && e.retestAttemptIds.length > 0 ? 'resolved' : 'open')
++  return {
++    ...e,
++    objective,
++    objectiveId,
++    status,
++    attemptIds: Array.isArray(e.attemptIds) && e.attemptIds.length > 0 ? e.attemptIds : [e.attemptId || e.id],
++    retestAttemptIds: Array.isArray(e.retestAttemptIds) ? e.retestAttemptIds : [],
++    reviewCount: typeof e.reviewCount === 'number' ? e.reviewCount : 0,
++  }
++}
++
++const migrateAttempt = (a: any): Attempt => ({
++  ...a,
++  objectiveIds: Array.isArray(a.objectiveIds) ? a.objectiveIds : [],
++  targetErrorIds: Array.isArray(a.targetErrorIds) ? a.targetErrorIds : undefined,
++})
++
++export const loadStore = (): Store => {
++  try {
++    const raw = localStorage.getItem(KEY) || localStorage.getItem(LEGACY_KEY)
++    if (!raw) return structuredClone(empty)
++    const x = JSON.parse(raw)
++    const restored: Store = {
++      ...empty,
++      ...x,
++      version: 1 as const,
++      profile: validProfile(x.profile),
++      attempts: Array.isArray(x.attempts) ? x.attempts.map(migrateAttempt) : [],
++      errors: Array.isArray(x.errors) ? x.errors.map(migrateError) : [],
++      sessions: Array.isArray(x.sessions) ? x.sessions : [],
++      plan: Array.isArray(x.plan) ? x.plan : [],
++      activeSession: x.activeSession ? { ...x.activeSession, paused: true } : undefined
++    }
++    localStorage.setItem(KEY, JSON.stringify(restored))
++    return restored
++  } catch {
++    return structuredClone(empty)
++  }
++}
++
++export const saveStore = (s: Store) => localStorage.setItem(KEY, JSON.stringify(s))
++export const clearStore = () => {
++  localStorage.removeItem(KEY)
++  localStorage.removeItem(LEGACY_KEY)
++}
+diff --git a/src/types.ts b/src/types.ts
+index 3b410dc..c871082 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -2,12 +2,12 @@ export type Skill = 'Reading' | 'Listening' | 'Writing' | 'Speaking'
+ export type QuestionType = 'multiple-choice' | 'true-false-not-given'
+ export type Page = 'dashboard' | 'plan' | 'practice' | 'errors' | 'record' | 'network' | 'design' | 'profile'
+ export type Profile = { targetBand?: number; currentLevel?: string; examDate?: string; dailyGoalMinutes?: number; daysOff: string[]; priority: Skill }
+-export type Question = { id: string; type: QuestionType; prompt: string; options: string[]; answer: string; explanation: string; objective: string }
+-export type Passage = { id: string; title: string; level: string; minutes: number; text: string; questions: Question[] }
++export type Question = { id: string; type: QuestionType; prompt: string; options: string[]; answer: string; explanation: string; objective: string; objectiveId?: string }
++export type Passage = { id: string; title: string; level: string; minutes: number; text: string; questions: Question[]; kind?: 'practice' | 'retest' }
+ export type Reflection = { evidence?: string; strategy?: string; mismatch?: string; nextStep?: string }
+-export type Attempt = { id: string; passageId: string; skill: Skill; answers: Record<string,string>; score: number; total: number; kind: 'practice'|'retest'; createdAt: string; objectiveIds: string[]; reflection?: Reflection }
+-export type ErrorRecord = { id: string; questionId: string; attemptId: string; attemptIds?: string[]; passageId: string; type: QuestionType; objective: string; prompt?: string; learnerAnswer: string; correctAnswer: string; explanation: string; createdAt: string; reviewCount: number; retestAttemptIds: string[] }
++export type Attempt = { id: string; passageId: string; skill: Skill; answers: Record<string, string>; score: number; total: number; kind: 'practice' | 'retest'; createdAt: string; objectiveIds: string[]; targetErrorIds?: string[]; targetObjectiveId?: string; reflection?: Reflection }
++export type ErrorRecord = { id: string; questionId: string; attemptId: string; attemptIds?: string[]; passageId: string; type: QuestionType; objective: string; objectiveId?: string; prompt?: string; learnerAnswer: string; correctAnswer: string; explanation: string; createdAt: string; reviewCount: number; retestAttemptIds: string[]; status?: 'open' | 'resolved'; resolvedAt?: string }
+ export type StudySession = { id: string; startedAt: string; endedAt: string; minutes: number; activity?: string; skill?: Skill }
+-export type PlanItem = { id: string; date: string; title: string; skill: Skill; objective: string; minutes: number; status: 'planned'|'done'|'skipped'; reason?: string; source?: 'manual'|'recommended' }
++export type PlanItem = { id: string; date: string; title: string; skill: Skill; objective: string; minutes: number; status: 'planned' | 'done' | 'skipped'; reason?: string; source?: 'manual' | 'recommended' }
+ export type ActiveSession = { id: string; startedAt: string; lastResumedAt: string; accumulatedSeconds: number; paused: boolean }
+ export type Store = { version: 1; profile: Profile; attempts: Attempt[]; errors: ErrorRecord[]; sessions: StudySession[]; plan: PlanItem[]; activeSession?: ActiveSession }

@@ -1,0 +1,13 @@
+export type Skill = 'Reading' | 'Listening' | 'Writing' | 'Speaking'
+export type QuestionType = 'multiple-choice' | 'true-false-not-given'
+export type Page = 'dashboard' | 'plan' | 'practice' | 'errors' | 'record' | 'network' | 'design' | 'profile'
+export type Profile = { targetBand?: number; currentLevel?: string; examDate?: string; dailyGoalMinutes?: number; daysOff: string[]; priority: Skill }
+export type Question = { id: string; type: QuestionType; prompt: string; options: string[]; answer: string; explanation: string; objective: string; objectiveId?: string }
+export type Passage = { id: string; title: string; level: string; minutes: number; text: string; questions: Question[]; kind?: 'practice' | 'retest' }
+export type Reflection = { evidence?: string; strategy?: string; mismatch?: string; nextStep?: string }
+export type Attempt = { id: string; passageId: string; skill: Skill; answers: Record<string, string>; score: number; total: number; kind: 'practice' | 'retest'; createdAt: string; objectiveIds: string[]; targetErrorIds?: string[]; targetObjectiveId?: string; reflection?: Reflection }
+export type ErrorRecord = { id: string; questionId: string; attemptId: string; attemptIds?: string[]; passageId: string; type: QuestionType; objective: string; objectiveId?: string; prompt?: string; learnerAnswer: string; correctAnswer: string; explanation: string; createdAt: string; reviewCount: number; retestAttemptIds: string[]; status?: 'open' | 'resolved'; resolvedAt?: string }
+export type StudySession = { id: string; startedAt: string; endedAt: string; minutes: number; activity?: string; skill?: Skill }
+export type PlanItem = { id: string; date: string; title: string; skill: Skill; objective: string; minutes: number; status: 'planned' | 'done' | 'skipped'; reason?: string; source?: 'manual' | 'recommended' }
+export type ActiveSession = { id: string; startedAt: string; lastResumedAt: string; accumulatedSeconds: number; paused: boolean }
+export type Store = { version: 1; profile: Profile; attempts: Attempt[]; errors: ErrorRecord[]; sessions: StudySession[]; plan: PlanItem[]; activeSession?: ActiveSession }

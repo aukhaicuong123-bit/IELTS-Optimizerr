@@ -1,0 +1,6 @@
+{
+  "name": "IELTS Optimizer",
+  "description": "Targeted IELTS error retesting, error memory, and personalized practice.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
