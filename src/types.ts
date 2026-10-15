@@ -40,6 +40,12 @@ export type HistoricalResolution = {
   resolvedAttemptId?: string
 }
 
+export type RetestOutcome = {
+  attemptId: string
+  outcome: 'passed' | 'failed' | 'unknown'
+  timestamp?: string
+}
+
 export type ErrorRecord = {
   id: string
   questionId: string
@@ -56,6 +62,7 @@ export type ErrorRecord = {
   createdAt: string
   reviewCount: number
   retestAttemptIds: string[]
+  retestOutcomes?: RetestOutcome[]
   status: 'open' | 'resolved'
   resolvedAt?: string
   resolvedAttemptId?: string

@@ -1,4 +1,4 @@
-import type { Attempt, ErrorOccurrence, ErrorRecord, HistoricalResolution, Passage, PlanItem, Profile, Question, StudySession } from './types'
+import type { Attempt, ErrorOccurrence, ErrorRecord, HistoricalResolution, Passage, PlanItem, Profile, Question, RetestOutcome, StudySession } from './types'
 
 /**
  * Explicit Policy: One ErrorRecord per objective with a history of distinct error occurrences.
@@ -134,7 +134,8 @@ export const mergeAttemptErrors = (
     if (isRetest) {
       // Find the specific error being targeted by this retest attempt
       let matchedError: ErrorRecord | undefined
-      if (targetErrorIds) {
+      if (targetErrorIds && targetErrorIds.length > 0) {
+        // Strict targeting: ONLY match an error whose ID is explicitly listed in targetErrorIds
         matchedError = result.find(e => targetErrorIds.includes(e.id) && getObjectiveId(e) === qObjId)
         if (!matchedError && targetErrorIds.length === 1 && questions.length === 1) {
           matchedError = result.find(e => targetErrorIds.includes(e.id))
@@ -142,6 +143,7 @@ export const mergeAttemptErrors = (
       } else if (targetObjectiveId) {
         matchedError = result.find(e => getObjectiveId(e) === targetObjectiveId && getObjectiveId(e) === qObjId)
       } else {
+        // Legacy fallback when attempt has neither targetErrorIds nor targetObjectiveId
         matchedError = result.find(e => getObjectiveId(e) === qObjId)
       }
 
@@ -154,18 +156,37 @@ export const mergeAttemptErrors = (
           matchedError.retestAttemptIds.push(attempt.id)
         }
 
+        // Record explicit verified retest outcome
+        const outcomeEntry: RetestOutcome = {
+          attemptId: attempt.id,
+          outcome: isCorrect ? 'passed' : 'failed',
+          timestamp: attempt.createdAt
+        }
+        const prevOutcomes = matchedError.retestOutcomes || []
+        matchedError.retestOutcomes = [
+          ...prevOutcomes.filter(o => o.attemptId !== attempt.id),
+          outcomeEntry
+        ]
+
         if (isCorrect) {
           matchedError.status = 'resolved'
           matchedError.resolvedAt = attempt.createdAt
           matchedError.resolvedAttemptId = attempt.id
-          matchedError.historicalResolutions = [
-            ...(matchedError.historicalResolutions || []),
-            { resolvedAt: attempt.createdAt, resolvedAttemptId: attempt.id }
-          ]
+          const alreadySaved = matchedError.historicalResolutions?.some(
+            h => h.resolvedAt === attempt.createdAt || (h.resolvedAttemptId && h.resolvedAttemptId === attempt.id)
+          )
+          if (!alreadySaved) {
+            matchedError.historicalResolutions = [
+              ...(matchedError.historicalResolutions || []),
+              { resolvedAt: attempt.createdAt, resolvedAttemptId: attempt.id }
+            ]
+          }
         } else {
           // Failed retest keeps error open or reopens it
           if (matchedError.status === 'resolved' && matchedError.resolvedAt) {
-            const alreadySaved = matchedError.historicalResolutions?.some(h => h.resolvedAt === matchedError.resolvedAt)
+            const alreadySaved = matchedError.historicalResolutions?.some(
+              h => h.resolvedAt === matchedError.resolvedAt || (h.resolvedAttemptId && h.resolvedAttemptId === matchedError.resolvedAttemptId)
+            )
             if (!alreadySaved) {
               matchedError.historicalResolutions = [
                 ...(matchedError.historicalResolutions || []),
@@ -247,8 +268,15 @@ export const getRetestQuestions = (passage: Passage, targetObjectiveIds: string[
   return passage.questions.filter(q => targetObjectiveIds.includes(getObjectiveId(q)))
 }
 
-export const canSubmitRetest = (isRetest: boolean, activeQuestions: Question[]): boolean => {
-  if (!isRetest) return activeQuestions.length > 0
+export const canSubmitRetest = (
+  isRetest: boolean,
+  activeQuestions: Question[],
+  hasTargetErrors: boolean = true
+): boolean => {
+  if (isRetest) {
+    if (!hasTargetErrors) return false
+    return activeQuestions.length > 0
+  }
   return activeQuestions.length > 0
 }
 

@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { BookOpen, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Home, ListChecks, Network, Palette, RotateCcw, Settings, Target } from 'lucide-react'
 import { passages, practicePassages, retestPassages } from './content'
 import { canSubmitRetest, formatMonthHeading, formatSelectedDateHeader, getMonthGrid, getObjectiveId, getRetestQuestions, heatLevel, isErrorOpen, localDate, mergeAttemptErrors, minutesByDate, recommendations, scoreAttempt, startOfLocalWeek, toLocalDateString, type CalendarDay } from './domain'
-import { clearStore, loadStore } from './storage'
+import { clearStore, isCorruptedWithoutRecovery, loadStore, saveStore } from './storage'
 import type { Attempt, Page, PlanItem, Profile, Question, Store } from './types'
 
 const nav: [Page, string, typeof Home][] = [
@@ -21,9 +21,12 @@ export default function App() {
   const [s, setS] = useState<Store>(loadStore),
     [page, setPage] = useState<Page>('dashboard'),
     [ids, setIds] = useState<string[]>([]),
-    [toast, setToast] = useState('')
+    [toast, setToast] = useState(''),
+    [isCorrupted, setIsCorrupted] = useState(() => isCorruptedWithoutRecovery())
 
-  useEffect(() => localStorage.setItem('ielts-optimizer-store-v1', JSON.stringify(s)), [s])
+  useEffect(() => {
+    saveStore(s)
+  }, [s])
 
   const note = (x: string) => {
     setToast(x)
@@ -62,6 +65,18 @@ export default function App() {
         </div>
       </aside>
       <main>
+        {isCorrupted && (
+          <div className="corrupted-storage-alert" role="alert" style={{ background: '#7f1d1d', color: '#fecaca', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 16px 0', borderRadius: '8px' }}>
+            <span>Storage corruption detected. Your original data has been preserved in backup. Auto-save is paused to prevent data loss.</span>
+            <button type="button" className="secondary" onClick={() => {
+              clearStore()
+              setIsCorrupted(false)
+              setS(loadStore())
+            }}>
+              Reset & Start Fresh
+            </button>
+          </div>
+        )}
         <header>
           <div>
             <p className="eyebrow">PERSONALIZED IELTS LEARNING SYSTEM</p>
@@ -265,6 +280,9 @@ export function Practice({ s, setS, note, ids, go }: { s: Store; setS: (s: Store
   const targetErrors = isRetest ? s.errors.filter(e => ids.includes(e.id)) : []
   const targetObjectiveIds = targetErrors.map(e => e.objectiveId || getObjectiveId(e))
 
+  // Fail closed if retest is active but targeted error record does not exist
+  const isTargetNotFound = isRetest && targetErrors.length === 0
+
   // Separate ordinary practice passages from Retest passages:
   const p = isRetest
     ? (retestPassages[0] || passages[1])
@@ -272,17 +290,17 @@ export function Practice({ s, setS, note, ids, go }: { s: Store; setS: (s: Store
 
   // Filter questions for retest so only the targeted objective is tested:
   const isTargetedRetest = isRetest && targetObjectiveIds.length > 0
-  const activeQuestions = isTargetedRetest
-    ? getRetestQuestions(p, targetObjectiveIds)
+  const activeQuestions = isRetest
+    ? (isTargetedRetest ? getRetestQuestions(p, targetObjectiveIds) : [])
     : p.questions
 
-  const hasNoMatchingRetest = isRetest && activeQuestions.length === 0
+  const hasNoMatchingQuestions = isRetest && !isTargetNotFound && activeQuestions.length === 0
 
   const [a, setA] = useState<Record<string, string>>({})
   const [result, setResult] = useState<Attempt>()
 
   const submit = () => {
-    if (!canSubmitRetest(isRetest, activeQuestions)) return
+    if (!canSubmitRetest(isRetest, activeQuestions, targetErrors.length > 0)) return
 
     const x: Attempt = {
       id: uid('attempt'),
@@ -314,7 +332,19 @@ export function Practice({ s, setS, note, ids, go }: { s: Store; setS: (s: Store
       </article>
       <article className="panel questions">
         <h3>{isRetest ? 'Retest · targeted objective check' : 'Check your understanding'}</h3>
-        {hasNoMatchingRetest ? (
+        {isTargetNotFound ? (
+          <div className="unmatched-retest-notice" role="alert" style={{ display: 'grid', gap: '12px', padding: '12px 0' }}>
+            <p className="status">Targeted error record not found.</p>
+            <p className="muted">
+              The targeted error does not exist in Error Memory. Retest is stopped to prevent invalid progress recording.
+            </p>
+            {go && (
+              <button type="button" className="secondary" onClick={() => go('errors')}>
+                ← Return to Error Review
+              </button>
+            )}
+          </div>
+        ) : hasNoMatchingQuestions ? (
           <div className="unmatched-retest-notice" role="alert" style={{ display: 'grid', gap: '12px', padding: '12px 0' }}>
             <p className="status">No matching retest item is available for this learning objective.</p>
             <p className="muted">

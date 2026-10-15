@@ -536,3 +536,196 @@ describe('Monthly Calendar domain and grid calculations', () => {
     expect(toLocalDateString(d)).toBe('2026-10-15')
   })
 })
+
+describe('Retest targeting hardening (Scope 3)', () => {
+  const urbanGardensRetest = passages.find(p => p.id === 'urban-gardens-retest')!
+
+  it('fails closed when targeted error ID does not exist in store', () => {
+    const dummyStore: Store = {
+      version: 1,
+      profile: { daysOff: [], priority: 'Reading' },
+      attempts: [],
+      errors: [
+        {
+          id: 'err-known',
+          questionId: 'q1',
+          attemptId: 'att-1',
+          attemptIds: ['att-1'],
+          passageId: 'urban-gardens',
+          type: 'multiple-choice',
+          objective: 'Identify the main idea',
+          objectiveId: 'identify-main-idea',
+          learnerAnswer: 'Wrong',
+          correctAnswer: 'Right',
+          explanation: 'Exp',
+          createdAt: '2026-03-01T09:00:00Z',
+          reviewCount: 0,
+          retestAttemptIds: [],
+          status: 'open'
+        }
+      ],
+      sessions: [],
+      plan: []
+    }
+
+    // Component test: Retest mode with unknown error ID
+    const html = renderToStaticMarkup(
+      React.createElement(Practice, {
+        s: dummyStore,
+        setS: () => {},
+        note: () => {},
+        ids: ['non-existent-error-id-999'],
+      })
+    )
+
+    expect(html).toContain('Targeted error record not found.')
+    expect(html).toContain('Retest is stopped to prevent invalid progress recording.')
+    expect(html).not.toContain('Submit attempt')
+    expect(html).not.toContain('Check your understanding')
+
+    // Domain test
+    expect(canSubmitRetest(true, [], false)).toBe(false)
+  })
+
+  it('fails closed when targeted error has an unknown objective ID not present in retest passage', () => {
+    const dummyStore: Store = {
+      version: 1,
+      profile: { daysOff: [], priority: 'Reading' },
+      attempts: [],
+      errors: [
+        {
+          id: 'err-unmatched-obj',
+          questionId: 'q-custom',
+          attemptId: 'att-1',
+          attemptIds: ['att-1'],
+          passageId: 'urban-gardens',
+          type: 'multiple-choice',
+          objective: 'Unmatched Objective',
+          objectiveId: 'unmatched-objective-id',
+          learnerAnswer: 'Wrong',
+          correctAnswer: 'Right',
+          explanation: 'Exp',
+          createdAt: '2026-03-01T09:00:00Z',
+          reviewCount: 0,
+          retestAttemptIds: [],
+          status: 'open'
+        }
+      ],
+      sessions: [],
+      plan: []
+    }
+
+    const matchingQuestions = getRetestQuestions(urbanGardensRetest, ['unmatched-objective-id'])
+    expect(matchingQuestions).toHaveLength(0)
+
+    const html = renderToStaticMarkup(
+      React.createElement(Practice, {
+        s: dummyStore,
+        setS: () => {},
+        note: () => {},
+        ids: ['err-unmatched-obj'],
+      })
+    )
+
+    expect(html).toContain('No matching retest item is available for this learning objective.')
+    expect(html).not.toContain('Submit attempt')
+    expect(canSubmitRetest(true, matchingQuestions, true)).toBe(false)
+  })
+
+  it('allows valid target retest and resolves ONLY the intended ErrorRecord', () => {
+    const errTarget: ErrorRecord = {
+      id: 'err-target-contradiction',
+      questionId: 'q2',
+      attemptId: 'att-1',
+      attemptIds: ['att-1'],
+      passageId: 'urban-gardens',
+      type: 'true-false-not-given',
+      objective: 'Distinguish explicit contradiction',
+      objectiveId: 'distinguish-contradiction',
+      learnerAnswer: 'True',
+      correctAnswer: 'False',
+      explanation: 'Exp',
+      createdAt: '2026-03-01T09:00:00Z',
+      reviewCount: 0,
+      retestAttemptIds: [],
+      status: 'open'
+    }
+
+    const errUntargeted: ErrorRecord = {
+      id: 'err-untargeted-main-idea',
+      questionId: 'q1',
+      attemptId: 'att-1',
+      attemptIds: ['att-1'],
+      passageId: 'urban-gardens',
+      type: 'multiple-choice',
+      objective: 'Identify the main idea',
+      objectiveId: 'identify-main-idea',
+      learnerAnswer: 'Wrong',
+      correctAnswer: 'Right',
+      explanation: 'Exp',
+      createdAt: '2026-03-01T09:00:00Z',
+      reviewCount: 0,
+      retestAttemptIds: [],
+      status: 'open'
+    }
+
+    const dummyStore: Store = {
+      version: 1,
+      profile: { daysOff: [], priority: 'Reading' },
+      attempts: [],
+      errors: [errTarget, errUntargeted],
+      sessions: [],
+      plan: []
+    }
+
+    // 1. Valid target questions matching
+    const matchingQs = getRetestQuestions(urbanGardensRetest, ['distinguish-contradiction'])
+    expect(matchingQs).toHaveLength(1)
+    expect(matchingQs[0].id).toBe('r2')
+    expect(canSubmitRetest(true, matchingQs, true)).toBe(true)
+
+    // 2. Component renders matching question and submit button
+    const html = renderToStaticMarkup(
+      React.createElement(Practice, {
+        s: dummyStore,
+        setS: () => {},
+        note: () => {},
+        ids: ['err-target-contradiction'],
+      })
+    )
+    expect(html).toContain('Submit attempt')
+    expect(html).toContain('One isolated garden is expected to cool an entire city.')
+
+    // 3. Complete retest attempt targeting only err-target-contradiction
+    const retestAttempt: Attempt = {
+      id: 'att-retest-pass-contradiction',
+      passageId: urbanGardensRetest.id,
+      skill: 'Reading',
+      answers: { r2: 'False' },
+      score: 1,
+      total: 1,
+      kind: 'retest',
+      createdAt: '2026-03-02T10:00:00Z',
+      objectiveIds: ['distinguish-contradiction'],
+      targetErrorIds: ['err-target-contradiction'],
+      targetObjectiveId: 'distinguish-contradiction'
+    }
+
+    const merged = mergeAttemptErrors([errTarget, errUntargeted], retestAttempt, matchingQs)
+    expect(merged).toHaveLength(2)
+
+    // Targeted error resolved with explicit retest outcome
+    const updatedTarget = merged.find(e => e.id === 'err-target-contradiction')!
+    expect(updatedTarget.status).toBe('resolved')
+    expect(updatedTarget.resolvedAt).toBe('2026-03-02T10:00:00Z')
+    expect(updatedTarget.retestOutcomes).toBeDefined()
+    expect(updatedTarget.retestOutcomes?.[0].outcome).toBe('passed')
+
+    // Untargeted error MUST remain open and unmodified
+    const updatedUntargeted = merged.find(e => e.id === 'err-untargeted-main-idea')!
+    expect(updatedUntargeted.status).toBe('open')
+    expect(updatedUntargeted.resolvedAt).toBeUndefined()
+    expect(updatedUntargeted.retestAttemptIds).toHaveLength(0)
+  })
+})
+

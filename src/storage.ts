@@ -1,10 +1,17 @@
-import type { Attempt, ErrorOccurrence, ErrorRecord, HistoricalResolution, Store } from './types'
+import type { Attempt, ErrorOccurrence, ErrorRecord, HistoricalResolution, RetestOutcome, Store } from './types'
 import { getObjectiveId } from './domain'
 
-const KEY = 'ielts-optimizer-store-v1'
-const LEGACY_KEY = 'optistudy-store-v1'
-const BACKUP_RAW_KEY = 'ielts-optimizer-store-raw-backup'
-const CORRUPTED_RAW_KEY = 'ielts-optimizer-corrupted-raw'
+export const KEY = 'ielts-optimizer-store-v1'
+export const LEGACY_KEY = 'optistudy-store-v1'
+export const BACKUP_RAW_KEY = 'ielts-optimizer-store-raw-backup'
+export const CORRUPTED_RAW_KEY = 'ielts-optimizer-corrupted-raw'
+
+let unrecoveredCorruption = false
+
+export const isCorruptedWithoutRecovery = (): boolean => unrecoveredCorruption
+export const setCorruptedWithoutRecovery = (val: boolean): void => {
+  unrecoveredCorruption = val
+}
 
 const empty: Store = {
   version: 1,
@@ -24,23 +31,23 @@ const validProfile = (p: any) => ({
   targetBand: typeof p?.targetBand === 'number' && p.targetBand >= 1 && p.targetBand <= 9 ? p.targetBand : undefined
 })
 
-export const migrateError = (e: any): ErrorRecord => {
+/**
+ * Conservative Migration Policy for Retest Outcomes:
+ *
+ * 1. Valid existing status ('open' | 'resolved') is preserved when supported by data.
+ *    If status is 'open', any stale resolvedAt / resolvedAttemptId metadata is cleared.
+ * 2. Missing or invalid status:
+ *    A Retest attempt ID proves that an attempt occurred, NOT that the learner passed it.
+ *    We never infer resolved status merely from retestAttemptIds.length > 0.
+ *    We ONLY mark resolved if there is explicit verified evidence of success:
+ *      a) An explicit retestOutcomes entry with outcome === 'passed'
+ *      b) A retest attempt in attempts history matching an ID in retestAttemptIds with score === total (and total > 0)
+ *      c) A resolvedAttemptId verified against historicalResolutions or attempts history
+ *    If evidence shows failed or unknown retests, or no verified pass exists, status is strictly 'open'.
+ */
+export const migrateError = (e: any, attempts?: Attempt[]): ErrorRecord => {
   const objective = e.objective || 'Identify the main idea'
   const objectiveId = e.objectiveId || getObjectiveId({ objectiveId: e.objectiveId, objective })
-
-  // Validate status strictly as 'open' or 'resolved'
-  let status: 'open' | 'resolved'
-  if (e.status === 'open' || e.status === 'resolved') {
-    status = e.status
-  } else {
-    // Legacy fallback based strictly on whether successful retests exist
-    const hasSuccessfulRetest = Array.isArray(e.retestAttemptIds) && e.retestAttemptIds.length > 0
-    status = hasSuccessfulRetest ? 'resolved' : 'open'
-  }
-
-  // Clear stale resolution metadata if status is open
-  const resolvedAt = status === 'open' ? undefined : (typeof e.resolvedAt === 'string' ? e.resolvedAt : undefined)
-  const resolvedAttemptId = status === 'open' ? undefined : (typeof e.resolvedAttemptId === 'string' ? e.resolvedAttemptId : undefined)
 
   const attemptIds: string[] = Array.isArray(e.attemptIds) && e.attemptIds.length > 0
     ? Array.from(new Set(e.attemptIds))
@@ -49,6 +56,52 @@ export const migrateError = (e: any): ErrorRecord => {
   const retestAttemptIds: string[] = Array.isArray(e.retestAttemptIds)
     ? Array.from(new Set(e.retestAttemptIds))
     : []
+
+  const retestOutcomes: RetestOutcome[] = Array.isArray(e.retestOutcomes)
+    ? e.retestOutcomes.map((o: any) => ({
+        attemptId: String(o.attemptId || 'unknown'),
+        outcome: (o.outcome === 'passed' || o.outcome === 'failed' || o.outcome === 'unknown') ? o.outcome : 'unknown',
+        timestamp: typeof o.timestamp === 'string' ? o.timestamp : undefined
+      }))
+    : []
+
+  let status: 'open' | 'resolved'
+  if (e.status === 'open' || e.status === 'resolved') {
+    status = e.status
+  } else {
+    // Missing or invalid status: apply conservative migration policy
+    let hasVerifiedPass = false
+
+    // Check explicit retest outcomes
+    if (retestOutcomes.some(o => o.outcome === 'passed')) {
+      hasVerifiedPass = true
+    }
+
+    // Check attempts history for verified score
+    if (!hasVerifiedPass && Array.isArray(attempts) && retestAttemptIds.length > 0) {
+      hasVerifiedPass = attempts.some(a =>
+        a.kind === 'retest' &&
+        retestAttemptIds.includes(a.id) &&
+        a.total > 0 &&
+        a.score === a.total
+      )
+    }
+
+    // Check resolvedAttemptId
+    if (!hasVerifiedPass && typeof e.resolvedAttemptId === 'string' && e.resolvedAttemptId.length > 0) {
+      if (Array.isArray(e.historicalResolutions) && e.historicalResolutions.some((h: any) => h?.resolvedAttemptId === e.resolvedAttemptId)) {
+        hasVerifiedPass = true
+      } else if (Array.isArray(attempts)) {
+        hasVerifiedPass = attempts.some(a => a.id === e.resolvedAttemptId && a.total > 0 && a.score === a.total)
+      }
+    }
+
+    status = hasVerifiedPass ? 'resolved' : 'open'
+  }
+
+  // Clear stale resolution metadata if status is open
+  const resolvedAt = status === 'open' ? undefined : (typeof e.resolvedAt === 'string' ? e.resolvedAt : undefined)
+  const resolvedAttemptId = status === 'open' ? undefined : (typeof e.resolvedAttemptId === 'string' ? e.resolvedAttemptId : undefined)
 
   const baseOcc: ErrorOccurrence = {
     attemptId: e.attemptId || attemptIds[0],
@@ -90,6 +143,7 @@ export const migrateError = (e: any): ErrorRecord => {
     createdAt: e.createdAt || latestContext.createdAt || new Date().toISOString(),
     reviewCount: typeof e.reviewCount === 'number' ? e.reviewCount : 0,
     retestAttemptIds,
+    retestOutcomes,
     status,
     resolvedAt,
     resolvedAttemptId,
@@ -133,8 +187,32 @@ export const deduplicateErrors = (errors: ErrorRecord[]): ErrorRecord[] => {
     // Merge duplicate records without losing history or occurrences
     const combinedAttemptIds = Array.from(new Set([...(existing.attemptIds || []), ...(err.attemptIds || [])]))
     const combinedRetests = Array.from(new Set([...(existing.retestAttemptIds || []), ...(err.retestAttemptIds || [])]))
-    const combinedOccurrences = [...getOccs(existing), ...getOccs(err)]
-    const combinedResolutions = [...(existing.historicalResolutions || []), ...(err.historicalResolutions || [])]
+
+    // Merge retest outcomes without duplicates
+    const outcomeMap = new Map<string, RetestOutcome>()
+    for (const o of [...(existing.retestOutcomes || []), ...(err.retestOutcomes || [])]) {
+      if (o && o.attemptId) {
+        outcomeMap.set(o.attemptId, o)
+      }
+    }
+    const combinedOutcomes = Array.from(outcomeMap.values())
+
+    // Merge occurrences without duplicating identical records
+    const occMap = new Map<string, ErrorOccurrence>()
+    for (const occ of [...getOccs(existing), ...getOccs(err)]) {
+      const occKey = `${occ.attemptId || 'no-att'}-${occ.questionId || 'no-q'}-${occ.createdAt || ''}`
+      occMap.set(occKey, occ)
+    }
+    const combinedOccurrences = Array.from(occMap.values())
+
+    // Merge resolutions without duplicating timestamps
+    const resMap = new Map<string, HistoricalResolution>()
+    for (const r of [...(existing.historicalResolutions || []), ...(err.historicalResolutions || [])]) {
+      if (r && r.resolvedAt) {
+        resMap.set(r.resolvedAt, r)
+      }
+    }
+    const combinedResolutions = Array.from(resMap.values())
 
     // Status policy: if any duplicate record is open, the overall error remains open
     const isOpen = existing.status === 'open' || err.status === 'open'
@@ -151,6 +229,7 @@ export const deduplicateErrors = (errors: ErrorRecord[]): ErrorRecord[] => {
       resolvedAttemptId: status === 'open' ? undefined : (err.resolvedAttemptId || existing.resolvedAttemptId),
       attemptIds: combinedAttemptIds,
       retestAttemptIds: combinedRetests,
+      retestOutcomes: combinedOutcomes,
       occurrences: combinedOccurrences,
       historicalResolutions: combinedResolutions,
       originalContext,
@@ -175,59 +254,133 @@ const migrateAttempt = (a: any): Attempt => ({
   targetErrorIds: Array.isArray(a.targetErrorIds) ? a.targetErrorIds : undefined,
 })
 
-export const loadStore = (): Store => {
-  const raw = localStorage.getItem(KEY) || localStorage.getItem(LEGACY_KEY)
-  if (!raw) return structuredClone(empty)
-
-  let x: any
-  try {
-    x = JSON.parse(raw)
-  } catch (err) {
-    // NEVER silently replace unreadable data with an empty Store.
-    // Preserve the raw unreadable string in a corrupted backup key so no learner data is wiped!
-    try {
-      localStorage.setItem(CORRUPTED_RAW_KEY, raw)
-    } catch {
-      // ignore backup write failure
-    }
-    // Return empty in-memory store for graceful degradation without overwriting KEY
-    return structuredClone(empty)
-  }
-
-  try {
-    // Preserve raw data snapshot before executing migration
-    localStorage.setItem(BACKUP_RAW_KEY, raw)
-  } catch {
-    // ignore backup write failure
-  }
-
-  const rawErrors = Array.isArray(x.errors) ? x.errors.map(migrateError) : []
+export const restoreStore = (parsed: any): Store => {
+  const rawAttempts = Array.isArray(parsed.attempts) ? parsed.attempts.map(migrateAttempt) : []
+  const rawErrors = Array.isArray(parsed.errors) ? parsed.errors.map((e: any) => migrateError(e, rawAttempts)) : []
   const dedupedErrors = deduplicateErrors(rawErrors)
 
-  const restored: Store = {
+  return {
     ...empty,
-    ...x,
+    ...parsed,
     version: 1 as const,
-    profile: validProfile(x.profile),
-    attempts: Array.isArray(x.attempts) ? x.attempts.map(migrateAttempt) : [],
+    profile: validProfile(parsed.profile),
+    attempts: rawAttempts,
     errors: dedupedErrors,
-    sessions: Array.isArray(x.sessions) ? x.sessions : [],
-    plan: Array.isArray(x.plan) ? x.plan : [],
-    activeSession: x.activeSession ? { ...x.activeSession, paused: true } : undefined
+    sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+    plan: Array.isArray(parsed.plan) ? parsed.plan : [],
+    activeSession: parsed.activeSession ? { ...parsed.activeSession, paused: true } : undefined
   }
-
-  // Safely persist migrated store
-  try {
-    localStorage.setItem(KEY, JSON.stringify(restored))
-  } catch {
-    // ignore storage quota errors
-  }
-
-  return restored
 }
 
-export const saveStore = (s: Store) => localStorage.setItem(KEY, JSON.stringify(s))
+/**
+ * Storage Recovery & Loading Policy:
+ *
+ * 1. If primary key ('ielts-optimizer-store-v1') exists and parses successfully:
+ *    Snapshot raw string to BACKUP_RAW_KEY before migration, migrate safely, and persist.
+ * 2. If primary key exists but contains corrupted JSON:
+ *    - Immediately snapshot raw corrupted string to CORRUPTED_RAW_KEY without overwriting primary key.
+ *    - Check if valid legacy store ('optistudy-store-v1') exists:
+ *      If legacy is valid JSON, recover all learner data from legacy, migrate, and save to primary KEY.
+ *    - If legacy is not valid or unavailable:
+ *      Mark unrecoveredCorruption = true and return in-memory empty fallback store.
+ *      Prevent automatic persistence until recovery or explicit reset!
+ * 3. If primary key does not exist but legacy exists:
+ *    Recover from legacy, save to primary KEY.
+ */
+export const loadStore = (): Store => {
+  const rawPrimary = localStorage.getItem(KEY)
+  const rawLegacy = localStorage.getItem(LEGACY_KEY)
+
+  // 1. Primary key exists
+  if (rawPrimary !== null) {
+    try {
+      const parsedPrimary = JSON.parse(rawPrimary)
+      unrecoveredCorruption = false
+
+      // Preserve raw snapshot before migration
+      try {
+        localStorage.setItem(BACKUP_RAW_KEY, rawPrimary)
+      } catch {}
+
+      const restored = restoreStore(parsedPrimary)
+      try {
+        localStorage.setItem(KEY, JSON.stringify(restored))
+      } catch {}
+
+      return restored
+    } catch (primaryErr) {
+      // Primary is corrupt JSON!
+      // Immediately preserve raw primary data in CORRUPTED_RAW_KEY
+      try {
+        localStorage.setItem(CORRUPTED_RAW_KEY, rawPrimary)
+      } catch {}
+
+      // Documented Recovery Policy: Check if valid legacy store exists to recover from
+      if (rawLegacy !== null) {
+        try {
+          const parsedLegacy = JSON.parse(rawLegacy)
+          unrecoveredCorruption = false
+          const restored = restoreStore(parsedLegacy)
+          try {
+            localStorage.setItem(KEY, JSON.stringify(restored))
+          } catch {}
+          return restored
+        } catch (legacyErr) {
+          // Legacy is also corrupt
+        }
+      }
+
+      // Both/primary corrupt: prevent automatic persistence of fallback empty store!
+      unrecoveredCorruption = true
+      return structuredClone(empty)
+    }
+  }
+
+  // 2. Primary does not exist, but legacy exists
+  if (rawLegacy !== null) {
+    try {
+      const parsedLegacy = JSON.parse(rawLegacy)
+      unrecoveredCorruption = false
+
+      try {
+        localStorage.setItem(BACKUP_RAW_KEY, rawLegacy)
+      } catch {}
+
+      const restored = restoreStore(parsedLegacy)
+      try {
+        localStorage.setItem(KEY, JSON.stringify(restored))
+      } catch {}
+      return restored
+    } catch (legacyErr) {
+      try {
+        localStorage.setItem(CORRUPTED_RAW_KEY, rawLegacy)
+      } catch {}
+      unrecoveredCorruption = true
+      return structuredClone(empty)
+    }
+  }
+
+  // 3. Fresh start
+  unrecoveredCorruption = false
+  return structuredClone(empty)
+}
+
+export const saveStore = (s: Store): boolean => {
+  // Prevent automatic persistence of empty fallback store if corruption was detected without recovery
+  if (unrecoveredCorruption) {
+    return false
+  }
+  try {
+    localStorage.setItem(KEY, JSON.stringify(s))
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const clearStore = () => {
   localStorage.removeItem(KEY)
   localStorage.removeItem(LEGACY_KEY)
+  localStorage.removeItem(CORRUPTED_RAW_KEY)
+  unrecoveredCorruption = false
 }
