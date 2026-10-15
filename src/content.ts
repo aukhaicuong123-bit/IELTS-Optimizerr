@@ -87,10 +87,10 @@ export const passages: Passage[] = [
       {
         id: 'r2',
         type: 'true-false-not-given',
-        prompt: 'Several connected gardens may improve comfort in a neighbourhood.',
+        prompt: 'One isolated garden is expected to cool an entire city.',
         options: ['True', 'False', 'Not Given'],
-        answer: 'True',
-        explanation: 'The passage directly says several gardens connected across a neighbourhood may improve comfort.',
+        answer: 'False',
+        explanation: 'The passage explicitly says one isolated plot should not be expected to cool the whole city, contradicting this claim.',
         objective: 'Distinguish explicit contradiction',
         objectiveId: 'distinguish-contradiction'
       },
@@ -161,8 +161,8 @@ export const passages: Passage[] = [
         options: ['True', 'False', 'Not Given'],
         answer: 'False',
         explanation: 'It contrasts attendance with more informative feedback about whether a skill can be used.',
-        objective: 'Locate supporting detail',
-        objectiveId: 'locate-supporting-detail'
+        objective: 'Distinguish explicit contradiction',
+        objectiveId: 'distinguish-contradiction'
       },
       {
         id: 'l4',

@@ -1,4 +1,20 @@
-import type { Attempt, ErrorRecord, PlanItem, Profile, Question, StudySession } from './types'
+import type { Attempt, ErrorOccurrence, ErrorRecord, HistoricalResolution, Passage, PlanItem, Profile, Question, StudySession } from './types'
+
+/**
+ * Explicit Policy: One ErrorRecord per objective with a history of distinct error occurrences.
+ *
+ * - Stable learning objective identity: objectiveId
+ * - Stable ErrorRecord identity: id (persists across retests and subsequent failures)
+ * - Original error context: originalContext (passageId, questionId, prompt, learnerAnswer, correctAnswer, explanation)
+ * - Latest failure context: latestContext (matches the most recent failed attempt context)
+ * - Occurrences history: occurrences[] (tracks every failed question attempt with its full context)
+ * - Attempt history: attemptIds[] and retestAttemptIds[]
+ * - Resolution lifecycle:
+ *     Passing retest -> status: 'resolved', resolvedAt, resolvedAttemptId
+ *     Subsequent failure / reopening -> status: 'open', resolvedAt & resolvedAttemptId cleared, historicalResolutions preserved
+ * - Top-level display fields (prompt, learnerAnswer, correctAnswer, explanation, passageId, questionId):
+ *     Always synchronized to latestContext so displayed prompt and learner answer NEVER come from different passages!
+ */
 
 export const normalizeObjectiveId = (obj: string): string =>
   obj.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -18,14 +34,29 @@ export const isErrorOpen = (e: ErrorRecord): boolean => {
   return !e.retestAttemptIds || e.retestAttemptIds.length === 0
 }
 
+export const isErrorResolved = (e: ErrorRecord): boolean => !isErrorOpen(e)
+
 export const scoreAttempt = (questions: Question[], answers: Record<string, string>) =>
   questions.reduce((n, q) => n + (answers[q.id] === q.answer ? 1 : 0), 0)
+
+export const makeOccurrence = (attempt: Attempt, q: Question): ErrorOccurrence => ({
+  attemptId: attempt.id,
+  passageId: attempt.passageId,
+  questionId: q.id,
+  type: q.type,
+  prompt: q.prompt,
+  learnerAnswer: attempt.answers[q.id] || 'No answer',
+  correctAnswer: q.answer,
+  explanation: q.explanation,
+  createdAt: attempt.createdAt,
+})
 
 export const makeErrors = (attempt: Attempt, questions: Question[]): ErrorRecord[] =>
   questions
     .filter(q => attempt.answers[q.id] !== q.answer)
     .map(q => {
       const objId = getObjectiveId(q)
+      const occ = makeOccurrence(attempt, q)
       return {
         id: `err-${attempt.passageId}-${objId}`,
         questionId: q.id,
@@ -36,13 +67,19 @@ export const makeErrors = (attempt: Attempt, questions: Question[]): ErrorRecord
         objective: q.objective,
         objectiveId: objId,
         prompt: q.prompt,
-        learnerAnswer: attempt.answers[q.id] || 'No answer',
+        learnerAnswer: occ.learnerAnswer,
         correctAnswer: q.answer,
         explanation: q.explanation,
         createdAt: attempt.createdAt,
         reviewCount: 0,
         retestAttemptIds: [],
         status: 'open' as const,
+        resolvedAt: undefined,
+        resolvedAttemptId: undefined,
+        originalContext: occ,
+        latestContext: occ,
+        occurrences: [occ],
+        historicalResolutions: [],
       }
     })
 
@@ -51,13 +88,40 @@ export const mergeAttemptErrors = (
   attempt: Attempt,
   questions: Question[]
 ): ErrorRecord[] => {
-  const result: ErrorRecord[] = existing.map(e => ({
-    ...e,
-    objectiveId: e.objectiveId || getObjectiveId(e),
-    attemptIds: [...(e.attemptIds || [e.attemptId])],
-    retestAttemptIds: [...(e.retestAttemptIds || [])],
-    status: e.status ? e.status : (e.retestAttemptIds && e.retestAttemptIds.length ? 'resolved' : 'open'),
-  }))
+  const result: ErrorRecord[] = existing.map(e => {
+    const objId = e.objectiveId || getObjectiveId(e)
+    const status: 'open' | 'resolved' = e.status === 'resolved' || e.status === 'open'
+      ? e.status
+      : (e.retestAttemptIds && e.retestAttemptIds.length > 0 ? 'resolved' : 'open')
+
+    const baseOcc: ErrorOccurrence = {
+      attemptId: e.attemptId || (e.attemptIds && e.attemptIds[0]) || 'unknown',
+      passageId: e.passageId || 'unknown',
+      questionId: e.questionId || 'unknown',
+      type: e.type || 'multiple-choice',
+      prompt: e.prompt || '',
+      learnerAnswer: e.learnerAnswer || 'No answer',
+      correctAnswer: e.correctAnswer || '',
+      explanation: e.explanation || '',
+      createdAt: e.createdAt || new Date().toISOString(),
+    }
+
+    return {
+      ...e,
+      objectiveId: objId,
+      attemptIds: [...(e.attemptIds || (e.attemptId ? [e.attemptId] : []))],
+      retestAttemptIds: [...(e.retestAttemptIds || [])],
+      status,
+      resolvedAt: status === 'open' ? undefined : e.resolvedAt,
+      resolvedAttemptId: status === 'open' ? undefined : e.resolvedAttemptId,
+      originalContext: e.originalContext || baseOcc,
+      latestContext: e.latestContext || baseOcc,
+      occurrences: e.occurrences && e.occurrences.length > 0 ? [...e.occurrences] : [baseOcc],
+      historicalResolutions: e.historicalResolutions && e.historicalResolutions.length > 0
+        ? [...e.historicalResolutions]
+        : (e.resolvedAt ? [{ resolvedAt: e.resolvedAt, resolvedAttemptId: e.resolvedAttemptId }] : []),
+    }
+  })
 
   const isRetest = attempt.kind === 'retest'
   const targetErrorIds = attempt.targetErrorIds && attempt.targetErrorIds.length > 0 ? attempt.targetErrorIds : undefined
@@ -78,42 +142,93 @@ export const mergeAttemptErrors = (
       } else if (targetObjectiveId) {
         matchedError = result.find(e => getObjectiveId(e) === targetObjectiveId && getObjectiveId(e) === qObjId)
       } else {
-        // Fallback for calls without explicit targetErrorIds (e.g. legacy tests)
         matchedError = result.find(e => getObjectiveId(e) === qObjId)
       }
 
       if (matchedError) {
+        // Complete related attempt history: record all retests (success and failure) in attemptIds
+        if (!matchedError.attemptIds?.includes(attempt.id)) {
+          matchedError.attemptIds = [...(matchedError.attemptIds || []), attempt.id]
+        }
+        if (!matchedError.retestAttemptIds.includes(attempt.id)) {
+          matchedError.retestAttemptIds.push(attempt.id)
+        }
+
         if (isCorrect) {
           matchedError.status = 'resolved'
           matchedError.resolvedAt = attempt.createdAt
-          if (!matchedError.retestAttemptIds.includes(attempt.id)) {
-            matchedError.retestAttemptIds.push(attempt.id)
-          }
+          matchedError.resolvedAttemptId = attempt.id
+          matchedError.historicalResolutions = [
+            ...(matchedError.historicalResolutions || []),
+            { resolvedAt: attempt.createdAt, resolvedAttemptId: attempt.id }
+          ]
         } else {
           // Failed retest keeps error open or reopens it
-          matchedError.status = 'open'
-          matchedError.attemptId = attempt.id
-          if (!matchedError.attemptIds?.includes(attempt.id)) {
-            matchedError.attemptIds = [...(matchedError.attemptIds || []), attempt.id]
+          if (matchedError.status === 'resolved' && matchedError.resolvedAt) {
+            const alreadySaved = matchedError.historicalResolutions?.some(h => h.resolvedAt === matchedError.resolvedAt)
+            if (!alreadySaved) {
+              matchedError.historicalResolutions = [
+                ...(matchedError.historicalResolutions || []),
+                { resolvedAt: matchedError.resolvedAt, resolvedAttemptId: matchedError.resolvedAttemptId }
+              ]
+            }
           }
-          matchedError.learnerAnswer = attempt.answers[q.id] || 'No answer'
+          matchedError.status = 'open'
+          // Remove stale current-resolution metadata
+          matchedError.resolvedAt = undefined
+          matchedError.resolvedAttemptId = undefined
+          matchedError.attemptId = attempt.id
           matchedError.createdAt = attempt.createdAt
+
+          const occ = makeOccurrence(attempt, q)
+          matchedError.latestContext = occ
+          matchedError.occurrences = [...(matchedError.occurrences || []), occ]
+          // Keep displayed question and learner answer internally consistent
+          matchedError.prompt = occ.prompt
+          matchedError.learnerAnswer = occ.learnerAnswer
+          matchedError.correctAnswer = occ.correctAnswer
+          matchedError.explanation = occ.explanation
+          matchedError.passageId = occ.passageId
+          matchedError.questionId = occ.questionId
+          matchedError.type = occ.type
         }
       }
-      // If no matched error was targeted for this question during a retest, do not create duplicate or unrelated records
     } else {
       // Ordinary practice attempt
       const old = result.find(e => getObjectiveId(e) === qObjId)
       if (!isCorrect) {
+        const occ = makeOccurrence(attempt, q)
         if (old) {
-          // Reopen or keep open, record the new attempt
+          // Reopen or keep open, record the new attempt occurrence
+          if (old.status === 'resolved' && old.resolvedAt) {
+            const alreadySaved = old.historicalResolutions?.some(h => h.resolvedAt === old.resolvedAt)
+            if (!alreadySaved) {
+              old.historicalResolutions = [
+                ...(old.historicalResolutions || []),
+                { resolvedAt: old.resolvedAt, resolvedAttemptId: old.resolvedAttemptId }
+              ]
+            }
+          }
           old.status = 'open'
+          // Clear stale resolution metadata on reopening
+          old.resolvedAt = undefined
+          old.resolvedAttemptId = undefined
           old.attemptId = attempt.id
           if (!old.attemptIds?.includes(attempt.id)) {
             old.attemptIds = [...(old.attemptIds || []), attempt.id]
           }
-          old.learnerAnswer = attempt.answers[q.id] || 'No answer'
           old.createdAt = attempt.createdAt
+          old.latestContext = occ
+          old.occurrences = [...(old.occurrences || []), occ]
+
+          // Keep displayed question, prompt, answer, explanation internally consistent:
+          old.prompt = occ.prompt
+          old.learnerAnswer = occ.learnerAnswer
+          old.correctAnswer = occ.correctAnswer
+          old.explanation = occ.explanation
+          old.passageId = occ.passageId
+          old.questionId = occ.questionId
+          old.type = occ.type
         } else {
           const newErrors = makeErrors(attempt, [q])
           if (newErrors[0]) {
@@ -121,11 +236,20 @@ export const mergeAttemptErrors = (
           }
         }
       }
-      // If correct in ordinary practice, do not silently resolve open error memory (retest is required)
     }
   }
 
   return result
+}
+
+export const getRetestQuestions = (passage: Passage, targetObjectiveIds: string[]): Question[] => {
+  if (!targetObjectiveIds || targetObjectiveIds.length === 0) return []
+  return passage.questions.filter(q => targetObjectiveIds.includes(getObjectiveId(q)))
+}
+
+export const canSubmitRetest = (isRetest: boolean, activeQuestions: Question[]): boolean => {
+  if (!isRetest) return activeQuestions.length > 0
+  return activeQuestions.length > 0
 }
 
 export const localDate = (iso: string) => new Date(iso).toLocaleDateString('en-CA')

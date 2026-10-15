@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { BookOpen, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Home, ListChecks, Network, Palette, RotateCcw, Settings, Target } from 'lucide-react'
 import { passages, practicePassages, retestPassages } from './content'
-import { formatMonthHeading, formatSelectedDateHeader, getMonthGrid, getObjectiveId, heatLevel, isErrorOpen, localDate, mergeAttemptErrors, minutesByDate, recommendations, scoreAttempt, startOfLocalWeek, toLocalDateString, type CalendarDay } from './domain'
+import { canSubmitRetest, formatMonthHeading, formatSelectedDateHeader, getMonthGrid, getObjectiveId, getRetestQuestions, heatLevel, isErrorOpen, localDate, mergeAttemptErrors, minutesByDate, recommendations, scoreAttempt, startOfLocalWeek, toLocalDateString, type CalendarDay } from './domain'
 import { clearStore, loadStore } from './storage'
 import type { Attempt, Page, PlanItem, Profile, Question, Store } from './types'
 
@@ -73,7 +73,7 @@ export default function App() {
         </header>
         {page === 'dashboard' && <Dashboard s={s} go={setPage} />}
         {page === 'plan' && <Plan s={s} setS={setS} note={note} />}
-        {page === 'practice' && <Practice s={s} setS={setS} note={note} ids={ids} />}
+        {page === 'practice' && <Practice s={s} setS={setS} note={note} ids={ids} go={setPage} />}
         {page === 'errors' && <Errors s={s} setS={setS} retest={retest} go={setPage} note={note} />}
         {page === 'record' && <Record s={s} setS={setS} note={note} />}
         {page === 'network' && <LearningNetwork />}
@@ -259,7 +259,7 @@ function Heatmap({ s }: { s: Store }) {
   )
 }
 
-function Practice({ s, setS, note, ids }: { s: Store; setS: (s: Store) => void; note: (x: string) => void; ids: string[] }) {
+export function Practice({ s, setS, note, ids, go }: { s: Store; setS: (s: Store) => void; note: (x: string) => void; ids: string[]; go?: (p: Page) => void }) {
   const isRetest = ids.length > 0
   const practiceCount = s.attempts.filter(x => x.kind === 'practice').length
   const targetErrors = isRetest ? s.errors.filter(e => ids.includes(e.id)) : []
@@ -271,15 +271,19 @@ function Practice({ s, setS, note, ids }: { s: Store; setS: (s: Store) => void; 
     : practicePassages[practiceCount % practicePassages.length]
 
   // Filter questions for retest so only the targeted objective is tested:
-  const qs = isRetest && targetObjectiveIds.length > 0
-    ? p.questions.filter(q => targetObjectiveIds.includes(getObjectiveId(q)))
+  const isTargetedRetest = isRetest && targetObjectiveIds.length > 0
+  const activeQuestions = isTargetedRetest
+    ? getRetestQuestions(p, targetObjectiveIds)
     : p.questions
-  const activeQuestions = qs.length > 0 ? qs : p.questions
+
+  const hasNoMatchingRetest = isRetest && activeQuestions.length === 0
 
   const [a, setA] = useState<Record<string, string>>({})
   const [result, setResult] = useState<Attempt>()
 
   const submit = () => {
+    if (!canSubmitRetest(isRetest, activeQuestions)) return
+
     const x: Attempt = {
       id: uid('attempt'),
       passageId: p.id,
@@ -309,8 +313,20 @@ function Practice({ s, setS, note, ids }: { s: Store; setS: (s: Store) => void; 
         ))}
       </article>
       <article className="panel questions">
-        <h3>{isRetest ? 'Retest · new passage, same objectives' : 'Check your understanding'}</h3>
-        {result ? (
+        <h3>{isRetest ? 'Retest · targeted objective check' : 'Check your understanding'}</h3>
+        {hasNoMatchingRetest ? (
+          <div className="unmatched-retest-notice" role="alert" style={{ display: 'grid', gap: '12px', padding: '12px 0' }}>
+            <p className="status">No matching retest item is available for this learning objective.</p>
+            <p className="muted">
+              The retest passage does not contain a question for "{targetObjectiveIds.join(', ')}". Retest submission is prevented to avoid testing unrelated skills.
+            </p>
+            {go && (
+              <button type="button" className="secondary" onClick={() => go('errors')}>
+                ← Return to Error Review
+              </button>
+            )}
+          </div>
+        ) : result ? (
           <Result x={result} qs={activeQuestions} s={s} setS={setS} />
         ) : (
           <>
