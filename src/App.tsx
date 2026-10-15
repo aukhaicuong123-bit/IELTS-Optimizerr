@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { BookOpen, CalendarDays, CheckCircle2, Clock3, Home, ListChecks, Network, Palette, RotateCcw, Settings, Target } from 'lucide-react'
+import { BookOpen, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Home, ListChecks, Network, Palette, RotateCcw, Settings, Target } from 'lucide-react'
 import { passages, practicePassages, retestPassages } from './content'
-import { getObjectiveId, heatLevel, isErrorOpen, localDate, mergeAttemptErrors, minutesByDate, recommendations, scoreAttempt, startOfLocalWeek } from './domain'
+import { formatMonthHeading, formatSelectedDateHeader, getMonthGrid, getObjectiveId, heatLevel, isErrorOpen, localDate, mergeAttemptErrors, minutesByDate, recommendations, scoreAttempt, startOfLocalWeek, toLocalDateString, type CalendarDay } from './domain'
 import { clearStore, loadStore } from './storage'
 import type { Attempt, Page, PlanItem, Profile, Question, Store } from './types'
 
@@ -130,46 +130,113 @@ function Metric({ icon, label, value }: { icon: ReactNode; label: string; value:
 }
 
 function Heatmap({ s }: { s: Store }) {
-  const map = minutesByDate(s.sessions),
-    [selected, setSelected] = useState(localDate(new Date().toISOString())),
-    start = new Date(startOfLocalWeek(new Date()))
-  start.setDate(start.getDate() - 84)
-  const days = Array.from({ length: 91 }, (_, i) => {
-    const d = new Date(start)
-    d.setDate(start.getDate() + i)
-    return d
-  }),
-    m = map[selected] || 0,
-    goal = s.profile.dailyGoalMinutes || 0
+  const map = minutesByDate(s.sessions)
+  const today = toLocalDateString(new Date())
+  const [selected, setSelected] = useState(today)
+
+  const initialDate = new Date()
+  const [viewYear, setViewYear] = useState(initialDate.getFullYear())
+  const [viewMonth, setViewMonth] = useState(initialDate.getMonth() + 1) // 1 to 12
+
+  const cells = getMonthGrid(viewYear, viewMonth)
+  const m = map[selected] || 0
+  const goal = s.profile.dailyGoalMinutes || 0
+
+  const prevMonth = () => {
+    if (viewMonth === 1) {
+      setViewYear(y => y - 1)
+      setViewMonth(12)
+    } else {
+      setViewMonth(m => m - 1)
+    }
+  }
+
+  const nextMonth = () => {
+    if (viewMonth === 12) {
+      setViewYear(y => y + 1)
+      setViewMonth(1)
+    } else {
+      setViewMonth(m => m + 1)
+    }
+  }
+
+  const onSelectDate = (cell: CalendarDay) => {
+    setSelected(cell.date)
+    if (cell.isAdjacentMonth) {
+      setViewYear(cell.year)
+      setViewMonth(cell.month)
+    }
+  }
 
   return (
-    <section className="panel">
-      <h3>Study heatmap</h3>
-      <p className="muted">Activity by local calendar day, separate from quiz mastery. Select a cell.</p>
-      <div className="heatmap-wrap">
-        <div className="weekday-labels" aria-hidden="true">
-          {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((x, i) => (
-            <span key={i}>{x}</span>
+    <section className="panel calendar-panel">
+      <div className="calendar-selected-header">
+        <span className="eyebrow">SELECTED DATE</span>
+        <h3 className="calendar-selected-title">{formatSelectedDateHeader(selected)}</h3>
+      </div>
+
+      <div className="calendar-nav-bar">
+        <h4 className="calendar-month-heading">{formatMonthHeading(viewYear, viewMonth)}</h4>
+        <div className="calendar-nav-buttons">
+          <button
+            type="button"
+            aria-label="Previous month"
+            className="calendar-nav-btn"
+            onClick={prevMonth}
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <button
+            type="button"
+            aria-label="Next month"
+            className="calendar-nav-btn"
+            onClick={nextMonth}
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      </div>
+
+      <div className="calendar-grid-container">
+        <div className="calendar-weekdays" role="row">
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+            <span key={d} className="calendar-weekday-label">{d}</span>
           ))}
         </div>
-        <div className="heatmap-grid">
-          {days.map(d => {
-            const date = localDate(d.toISOString()),
-              v = map[date] || 0,
-              rest = s.profile.daysOff.includes(date)
+
+        <div className="calendar-days-grid" role="grid">
+          {cells.map(cell => {
+            const v = map[cell.date] || 0
+            const rest = s.profile.daysOff.includes(cell.date)
+            const isSelected = selected === cell.date
+            const hasActivity = v > 0
+            const level = heatLevel(v, goal)
+
             return (
               <button
-                aria-label={`${date}: ${Math.round(v)} minutes${rest ? ', planned rest day' : ''}`}
-                className={`heat l${heatLevel(v, goal)} ${rest ? 'rest-day' : ''} ${selected === date ? 'selected-day' : ''}`}
-                onClick={() => setSelected(date)}
-                key={date}
+                key={cell.date}
+                type="button"
+                aria-label={`${cell.date}: ${Math.round(v)} minutes${rest ? ', planned rest day' : ''}${isSelected ? ', selected' : ''}`}
+                aria-selected={isSelected}
+                className={[
+                  'calendar-day-btn',
+                  cell.isAdjacentMonth ? 'adjacent-month' : 'current-month',
+                  hasActivity ? `cal-heat-${level}` : 'no-heat',
+                  rest ? 'rest-day' : '',
+                  isSelected ? 'selected-date' : '',
+                ].filter(Boolean).join(' ')}
+                onClick={() => onSelectDate(cell)}
               >
-                {d.getDate() === 1 ? d.toLocaleString('en', { month: 'short' }) : v ? Math.round(v) : ''}
+                <span className={`calendar-day-circle ${isSelected ? 'selected-circle' : ''}`}>
+                  {cell.dayNumber}
+                </span>
+                {hasActivity && <span className="calendar-activity-dot" aria-hidden="true" />}
               </button>
             )
           })}
         </div>
       </div>
+
       <div className="heatmap-detail">
         <b>{selected}</b>
         <span>
@@ -177,12 +244,16 @@ function Heatmap({ s }: { s: Store }) {
         </span>
         <span>{s.profile.daysOff.includes(selected) ? 'Planned rest day' : ''}</span>
       </div>
+
       <div className="legend">
         <span>0</span>
         {[0, 1, 2, 3, 4, 5].map(x => (
           <i className={`heat l${x}`} key={x} />
         ))}
         <span>Goal+</span>
+        <span className="legend-selected-indicator">
+          <span className="legend-blue-dot" /> Selected date
+        </span>
       </div>
     </section>
   )

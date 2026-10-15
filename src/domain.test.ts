@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { passages, practicePassages, retestPassages } from './content'
-import { heatLevel, isErrorOpen, makeErrors, mergeAttemptErrors, minutesByDate, recommendations, scoreAttempt, startOfLocalWeek } from './domain'
+import { formatMonthHeading, formatSelectedDateHeader, getDaysInMonth, getMonthGrid, heatLevel, isErrorOpen, isLeapYear, makeErrors, mergeAttemptErrors, minutesByDate, recommendations, scoreAttempt, startOfLocalWeek, toLocalDateString } from './domain'
 import type { Attempt, ErrorRecord, Profile, StudySession } from './types'
 
 const profile: Profile = { daysOff: [], priority: 'Reading', dailyGoalMinutes: 30 }
@@ -328,3 +328,96 @@ describe('Retest and Error Memory integrity regressions', () => {
     expect(true).toBe(true)
   })
 })
+
+describe('Monthly Calendar domain and grid calculations', () => {
+  it('generates a consistent 42-cell grid aligned to Sunday for October 2026', () => {
+    const grid = getMonthGrid(2026, 10)
+    expect(grid).toHaveLength(42)
+
+    // First cell is Sunday Sep 27, 2026
+    expect(grid[0].date).toBe('2026-09-27')
+    expect(grid[0].dayNumber).toBe(27)
+    expect(grid[0].isCurrentMonth).toBe(false)
+    expect(grid[0].isAdjacentMonth).toBe(true)
+    expect(grid[0].month).toBe(9)
+    expect(grid[0].year).toBe(2026)
+
+    // Oct 1 is Thursday (index 4)
+    expect(grid[4].date).toBe('2026-10-01')
+    expect(grid[4].dayNumber).toBe(1)
+    expect(grid[4].isCurrentMonth).toBe(true)
+    expect(grid[4].isAdjacentMonth).toBe(false)
+
+    // Oct 31 is Saturday (index 34)
+    expect(grid[34].date).toBe('2026-10-31')
+    expect(grid[34].dayNumber).toBe(31)
+    expect(grid[34].isCurrentMonth).toBe(true)
+    expect(grid[34].isAdjacentMonth).toBe(false)
+
+    // Nov 1 is Sunday (index 35, trailing adjacent month)
+    expect(grid[35].date).toBe('2026-11-01')
+    expect(grid[35].dayNumber).toBe(1)
+    expect(grid[35].isCurrentMonth).toBe(false)
+    expect(grid[35].isAdjacentMonth).toBe(true)
+    expect(grid[35].month).toBe(11)
+
+    // Last cell (index 41) is Nov 7
+    expect(grid[41].date).toBe('2026-11-07')
+    expect(grid[41].dayNumber).toBe(7)
+  })
+
+  it('correctly transitions across year boundary from December to January and vice versa', () => {
+    // December 2026 -> trailing days should be in January 2027
+    const decGrid = getMonthGrid(2026, 12)
+    expect(decGrid).toHaveLength(42)
+    const trailingJan = decGrid.filter(c => c.month === 1)
+    expect(trailingJan.length).toBeGreaterThan(0)
+    expect(trailingJan[0].year).toBe(2027)
+    expect(trailingJan[0].date.startsWith('2027-01-')).toBe(true)
+
+    // January 2026 -> leading days should be in December 2025
+    const janGrid = getMonthGrid(2026, 1)
+    expect(janGrid).toHaveLength(42)
+    const leadingDec = janGrid.filter(c => c.month === 12)
+    // 2026-01-01 was Thursday, so leading Sun-Wed are Dec 28, 29, 30, 31 of 2025
+    expect(leadingDec).toHaveLength(4)
+    expect(leadingDec[0].year).toBe(2025)
+    expect(leadingDec[0].date).toBe('2025-12-28')
+  })
+
+  it('accurately calculates leap years and days in February', () => {
+    expect(isLeapYear(2024)).toBe(true)
+    expect(getDaysInMonth(2024, 2)).toBe(29)
+
+    expect(isLeapYear(2025)).toBe(false)
+    expect(getDaysInMonth(2025, 2)).toBe(28)
+
+    expect(isLeapYear(2026)).toBe(false)
+    expect(getDaysInMonth(2026, 2)).toBe(28)
+
+    // Century rules: divisible by 100 is not leap unless divisible by 400
+    expect(isLeapYear(2000)).toBe(true)
+    expect(getDaysInMonth(2000, 2)).toBe(29)
+    expect(isLeapYear(1900)).toBe(false)
+    expect(getDaysInMonth(1900, 2)).toBe(28)
+
+    // Leap year Feb 2024 grid contains 29 current-month days
+    const feb2024Grid = getMonthGrid(2024, 2)
+    const currentMonthFeb2024 = feb2024Grid.filter(c => c.isCurrentMonth)
+    expect(currentMonthFeb2024).toHaveLength(29)
+    expect(currentMonthFeb2024[28].date).toBe('2024-02-29')
+  })
+
+  it('formats selected date header in long format and month heading accurately', () => {
+    expect(formatSelectedDateHeader('2026-10-15')).toBe('Thursday, October 15')
+    expect(formatSelectedDateHeader('2026-01-01')).toBe('Thursday, January 1')
+    expect(formatMonthHeading(2026, 10)).toBe('October 2026')
+    expect(formatMonthHeading(2027, 1)).toBe('January 2027')
+  })
+
+  it('formats local date reliably without UTC timezone shifting', () => {
+    const d = new Date(2026, 9, 15) // Oct 15 2026 local time
+    expect(toLocalDateString(d)).toBe('2026-10-15')
+  })
+})
+

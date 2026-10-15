@@ -181,3 +181,95 @@ export const recommendations = (profile: Profile, attempts: Attempt[], errors: E
     return { title: pending.title, reason: pending.reason || 'This is the next planned activity.', page: 'plan' as const }
   return { title: 'Plan your next evidence check', reason: 'No open error or pending task is available; add a transparent activity to continue.', page: 'plan' as const }
 }
+
+export type CalendarDay = {
+  date: string
+  dayNumber: number
+  isCurrentMonth: boolean
+  isAdjacentMonth: boolean
+  year: number
+  month: number
+}
+
+export const toLocalDateString = (d: Date): string => {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+export const getDaysInMonth = (year: number, month: number): number => {
+  return new Date(year, month, 0).getDate()
+}
+
+export const isLeapYear = (year: number): boolean => {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0
+}
+
+export const getMonthGrid = (year: number, month: number): CalendarDay[] => {
+  const firstDayIndex = new Date(year, month - 1, 1).getDay()
+  const daysInCurrentMonth = getDaysInMonth(year, month)
+
+  const prevYear = month === 1 ? year - 1 : year
+  const prevMonth = month === 1 ? 12 : month - 1
+  const daysInPrevMonth = getDaysInMonth(prevYear, prevMonth)
+
+  const nextYear = month === 12 ? year + 1 : year
+  const nextMonth = month === 12 ? 1 : month + 1
+
+  const cells: CalendarDay[] = []
+
+  // 1. Leading adjacent days from previous month to align first day with Sunday
+  for (let i = firstDayIndex - 1; i >= 0; i--) {
+    const dayNumber = daysInPrevMonth - i
+    const date = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`
+    cells.push({
+      date,
+      dayNumber,
+      isCurrentMonth: false,
+      isAdjacentMonth: true,
+      year: prevYear,
+      month: prevMonth,
+    })
+  }
+
+  // 2. Days of the current month
+  for (let day = 1; day <= daysInCurrentMonth; day++) {
+    const date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    cells.push({
+      date,
+      dayNumber: day,
+      isCurrentMonth: true,
+      isAdjacentMonth: false,
+      year,
+      month,
+    })
+  }
+
+  // 3. Trailing adjacent days from next month to complete 6 full 7-day rows (42 cells)
+  const remainingCells = 42 - cells.length
+  for (let day = 1; day <= remainingCells; day++) {
+    const date = `${nextYear}-${String(nextMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    cells.push({
+      date,
+      dayNumber: day,
+      isCurrentMonth: false,
+      isAdjacentMonth: true,
+      year: nextYear,
+      month: nextMonth,
+    })
+  }
+
+  return cells
+}
+
+export const formatSelectedDateHeader = (dateStr: string): string => {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const date = new Date(y, m - 1, d)
+  return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+}
+
+export const formatMonthHeading = (year: number, month: number): string => {
+  const date = new Date(year, month - 1, 1)
+  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
